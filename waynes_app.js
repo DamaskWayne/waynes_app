@@ -10,10 +10,11 @@ const vk = new VK({
 const db = new sqlite3.Database('users.db')
 
 const oneHour = 3600 // 1 час в секундах
+const twoHours = 7200; // 2 часа в секундах
 
 db.serialize(() => {
 	db.run(
-		'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, vk_id INTEGER, nickname TEXT, status TEXT, wcoin INTEGER, rating INTEGER DEFAULT 0, last_bonus_timestamp INTEGER DEFAULT 0)'
+		'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, vk_id INTEGER, nickname TEXT, status TEXT, wcoin INTEGER, rating INTEGER DEFAULT 0, last_bonus_timestamp INTEGER DEFAULT 0, last_shovel_purchase_timestamp INTEGER DEFAULT 0, rewards INTEGER DEFAULT 0)'
 	)
 
 	db.run(
@@ -37,7 +38,36 @@ db.serialize(() => {
         player2_id INTEGER,
         status TEXT DEFAULT 'open'
     )`)
+
+	db.run(
+		'CREATE TABLE IF NOT EXISTS shovels (id INTEGER PRIMARY KEY, vk_id INTEGER, common INTEGER DEFAULT 0, silver INTEGER DEFAULT 0, gold INTEGER DEFAULT 0, platinum INTEGER DEFAULT 0, wayne INTEGER DEFAULT 0)'
+	)
 })
+
+const shovelPrices = {
+	обычная: 20,
+	серебряная: 50,
+	золотая: 100,
+	платиновая: 300,
+	wayneлопата: 700,
+}
+
+// Призы и попытки лопат
+const shovelRewards = {
+	обычная: { attempts: 1, min: 10, max: 35 },
+	серебряная: { attempts: 1, min: 40, max: 65 },
+	золотая: { attempts: 1, min: 90, max: 120, case: 'common' },
+	платиновая: { attempts: 1, min: 250, max: 330, case: 'silver' },
+	wayneлопата: { attempts: 1, min: 600, max: 730, case: 'gold' },
+}
+
+const shovelTypes = {
+	обычная: 'common',
+	серебряная: 'silver',
+	золотая: 'gold',
+	платиновая: 'platinum',
+	wayneлопата: 'wayne',
+}
 
 const caseRewards = {
 	common: {
@@ -107,21 +137,98 @@ function getRandomReward(caseType) {
 }
 
 // Функция обновления баланса WCoin
-async function updateUserWcoin(vkId, delta) {
-    return new Promise((resolve, reject) => {
-        db.run(
-            `UPDATE users SET wcoin = wcoin + ? WHERE vk_id = ?`,
-            [delta, vkId],
-            function(err) {
-                if (err) {
-                    reject(err);
-                } else {
-                    console.log(`Пользователь ${vkId} получил изменение баланса WCoin на ${delta}.`);
-                    resolve();
-                }
-            }
-        );
-    });
+async function updateUserWcoin(userId, amount) {
+	return new Promise((resolve, reject) => {
+		db.run(
+			`UPDATE users SET wcoin = wcoin + ? WHERE vk_id = ?`,
+			[amount, userId],
+			function (err) {
+				if (err) reject(err)
+				else resolve()
+			}
+		)
+	})
+}
+
+// Функция для вычисления приза
+function calculateReward(shovel) {
+    const min = shovel.min;
+    const max = shovel.max;
+    const reward = Math.floor(Math.random() * (max - min + 1)) + min;
+    return reward;
+}
+
+async function updateUserShovels(vk_id, shovelType, increment) {
+	return new Promise((resolve, reject) => {
+		const column = shovelTypes[shovelType]
+		if (!column) {
+			return reject(new Error('Неверный тип лопаты'))
+		}
+
+		const sql = `UPDATE shovels SET ${column} = ${column} + ? WHERE vk_id = ?`
+		console.log(`Executing SQL: ${sql}`)
+
+		const stmt = db.prepare(sql)
+		stmt.run(increment, vk_id, function (err) {
+			if (err) {
+				reject(err)
+			} else {
+				console.log(`Updated shovel count (${shovelType}) for user ${vk_id}`)
+				resolve()
+			}
+		})
+		stmt.finalize()
+	})
+}
+
+async function updateUserRewards(vk_id, reward) {
+	return new Promise((resolve, reject) => {
+		const stmt = db.prepare(
+			'UPDATE users SET wcoin = wcoin + ? WHERE vk_id = ?'
+		)
+		stmt.run(reward, vk_id, function (err) {
+			if (err) {
+				reject(err)
+			} else {
+				console.log(`Обновлено количество WCoin для пользователя ${vk_id}`)
+				resolve()
+			}
+		})
+		stmt.finalize()
+	})
+}
+
+async function ensureUserShovels(vk_id) {
+	const userShovels = await getUserShovels(vk_id)
+
+	if (!userShovels) {
+		// Пользователя нет в таблице `shovels`, создадим его
+		return new Promise((resolve, reject) => {
+			db.run('INSERT INTO shovels (vk_id) VALUES (?)', [vk_id], function (err) {
+				if (err) {
+					reject(err)
+				} else {
+					resolve()
+				}
+			})
+		})
+	}
+}
+
+
+async function updateUserNickname(vk_id, newNickname) {
+	return new Promise((resolve, reject) => {
+		const stmt = db.prepare('UPDATE users SET nickname = ? WHERE vk_id = ?')
+		stmt.run(newNickname, vk_id, function (err) {
+			if (err) {
+				reject(err)
+			} else {
+				console.log(`Ник пользователя ${vk_id} изменен на ${newNickname}`)
+				resolve()
+			}
+		})
+		stmt.finalize()
+	})
 }
 
 async function resolveUserId(target) {
@@ -219,27 +326,35 @@ async function addUser(vk_id, nickname, status, wcoin) {
 	})
 }
 
-async function updateUserNickname(vk_id, newNickname) {
-	return new Promise((resolve, reject) => {
-		const stmt = db.prepare('UPDATE users SET nickname = ? WHERE vk_id = ?')
-		stmt.run(newNickname, vk_id, function (err) {
-			if (err) {
-				reject(err)
-			} else {
-				console.log(`Ник пользователя ${vk_id} изменен на ${newNickname}`)
-				resolve()
-			}
-		})
-		stmt.finalize()
-	})
-}
-
 async function getUser(vk_id) {
 	return new Promise((resolve, reject) => {
 		db.get('SELECT * FROM users WHERE vk_id = ?', [vk_id], (err, row) => {
 			if (err) {
 				reject(err)
 			} else {
+				// Если пользователь не найден, возвращаем null
+				if (!row) {
+					resolve(null)
+				} else {
+					// Если last_shovel_purchase_timestamp отсутствует, устанавливаем его в 0
+					if (!row.last_shovel_purchase_timestamp) {
+						row.last_shovel_purchase_timestamp = 0
+					}
+					resolve(row)
+				}
+			}
+		})
+	})
+}
+
+async function getUserShovels(vk_id) {
+	return new Promise((resolve, reject) => {
+		db.get('SELECT * FROM shovels WHERE vk_id = ?', [vk_id], (err, row) => {
+			if (err) {
+				console.error(`Error retrieving user shovels: ${err.message}`)
+				reject(err)
+			} else {
+				console.log(`Retrieved user shovels: ${JSON.stringify(row)}`)
 				resolve(row)
 			}
 		})
@@ -326,6 +441,22 @@ async function updateLastBonusTimestamp(vk_id, timestamp) {
 	return new Promise((resolve, reject) => {
 		const stmt = db.prepare(
 			'UPDATE users SET last_bonus_timestamp = ? WHERE vk_id = ?'
+		)
+		stmt.run(timestamp, vk_id, function (err) {
+			if (err) {
+				reject(err)
+			} else {
+				resolve()
+			}
+		})
+		stmt.finalize()
+	})
+}
+
+async function updateLastShovelPurchaseTimestamp(vk_id, timestamp) {
+	return new Promise((resolve, reject) => {
+		const stmt = db.prepare(
+			'UPDATE users SET last_shovel_purchase_timestamp = ? WHERE vk_id = ?'
 		)
 		stmt.run(timestamp, vk_id, function (err) {
 			if (err) {
@@ -486,6 +617,13 @@ async function handleCaseOpenCommand(context, caseType) {
 	}
 
 	const caseTypeEng = caseTypes[caseType]
+	if (!caseTypeEng || !(caseTypeEng in caseRewards)) {
+		await context.send(
+			`${await getUserMention(userId)}, ❌ Неверный тип кейса.`
+		)
+		return
+	}
+
 	const userCases = await getUserCases(userId)
 
 	if (userCases[caseTypeEng] <= 0) {
@@ -542,7 +680,7 @@ async function handleUserJoin(context, userId) {
 	if (userId !== context.senderId) {
 		const userMention = await getUserMention(userId);
 		await context.send(
-			`Добро пожаловать, ${userMention}!\n\nМы рады, что ты выбрал нас. Скорей регистрируйся в нашем боте по команде "/reg", вписывай промокод — "waynes" и получай бесплатный кейс для получения приза!\nЧем больше ты общаешься в нашем боте, тем больше зарабатываешь WCoin, покупай кейсы и получай призы!`
+			`Добро пожаловать, ${userMention}!\n\nМы рады, что ты выбрал нас. Скорей регистрируйся в нашем боте по команде "/reg", вписывай промокод — "#waynes" и получай бесплатный кейс для получения приза!\nЧем больше ты общаешься в нашем боте, тем больше зарабатываешь WCoin, покупай кейсы и получай призы!`
 		);
 	}
 }
@@ -666,42 +804,81 @@ async function getUserWcoin(userId) {
 
 async function createRoom(context, roomName, userId, wcoinAmount) {
 	return new Promise((resolve, reject) => {
-		// Check if the user has enough WCoin to create a room
-		getUserWcoin(userId)
-			.then(userWcoin => {
-				if (userWcoin < wcoinAmount) {
-					context.send(
-						`❌ У вас недостаточно WCoin для создания комнаты.`
-					)
-					reject('Not enough WCoin')
+		// Check how many rooms the user has created
+		db.all(
+			`SELECT id FROM rooms WHERE creator_id = ? AND status = 'open'`,
+			[userId],
+			(err, rows) => {
+				if (err) {
+					reject(err)
 					return
 				}
 
-				// Deduct the WCoin amount from the user
-				updateUserWcoin(userId, -wcoinAmount)
-					.then(() => {
-						// Insert the new room into the database
-						db.run(
-							`INSERT INTO rooms (room_name, creator_id, wcoin_amount, status) VALUES (?, ?, ?, 'open')`,
-							[roomName, userId, wcoinAmount],
-							function (err) {
-								if (err) {
-									reject(err)
+				if (rows.length >= 3) {
+					context.send(`❌ Вы не можете создать больше трёх комнат.`)
+					reject('Room limit reached')
+					return
+				}
+
+				// Check for existing room name
+				db.get(
+					`SELECT id FROM rooms WHERE room_name = ? AND status = 'open'`,
+					[roomName],
+					(err, row) => {
+						if (err) {
+							reject(err)
+							return
+						}
+
+						if (row) {
+							context.send(
+								`❌ Комната с названием "${roomName}" уже существует.`
+							)
+							reject('Room name exists')
+							return
+						}
+
+						// Check if the user has enough WCoin to create a room
+						getUserWcoin(userId)
+							.then(userWcoin => {
+								if (userWcoin < wcoinAmount) {
+									context.send(
+										`❌ У вас недостаточно WCoin для создания комнаты.`
+									)
+									reject('Not enough WCoin')
 									return
 								}
 
-								context.send(
-									`✅ Комната "${roomName}" создана. Вы поставили ${wcoinAmount} WCoin.`
-								)
-								resolve()
-							}
-						)
-					})
-					.catch(reject)
-			})
-			.catch(reject)
+								// Deduct the WCoin amount from the user
+								updateUserWcoin(userId, -wcoinAmount)
+									.then(() => {
+										// Insert the new room into the database
+										db.run(
+											`INSERT INTO rooms (room_name, creator_id, wcoin_amount, status) VALUES (?, ?, ?, 'open')`,
+											[roomName, userId, wcoinAmount],
+											function (err) {
+												if (err) {
+													reject(err)
+													return
+												}
+
+												context.send(
+													`✅ Комната "${roomName}" создана. Вы поставили ${wcoinAmount} WCoin.`
+												)
+												resolve()
+											}
+										)
+									})
+									.catch(reject)
+							})
+							.catch(reject)
+					}
+				)
+			}
+		)
 	})
 }
+
 
 async function handleWBarCommand(context, command, params) {
 	const userId = context.senderId
@@ -712,15 +889,17 @@ async function handleWBarCommand(context, command, params) {
 	if (!command) {
 		// Handle case where command is missing or invalid
 		await context.send(
-			`${await getUserMention(userId)}, ❌ Неправильно указана команда. Используйте: /wbar создать [название_комнаты] [сумма], /wbar пригласить [пользователь], /wbar принять [название], или /wbar отмена`
+			`${await getUserMention(userId)}, ❌ Неправильно указана команда. Используйте: /wbar создать [название_комнаты] [сумма], /wbar пригласить [пользователь], /wbar принять [название], или /wbar отмена.\nПосмотреть список комнат: /wbar комнаты`
 		)
 		return
 	}
 
 	if (command === 'создать') {
-		if (params.length < 2) {
+		if (params.length < 2 || isNaN(parseInt(params[1], 10))) {
 			await context.send(
-				`${await getUserMention(userId)}, ❌ Неправильно указаны параметры. Используйте: /wbar создать [название_комнаты] [сумма]`
+				`${await getUserMention(
+					userId
+				)}, ❌ Неправильно указаны параметры. Используйте: /wbar создать [название_комнаты] [сумма]`
 			)
 			return
 		}
@@ -728,12 +907,23 @@ async function handleWBarCommand(context, command, params) {
 		const roomName = params[0]
 		const wcoinAmount = parseInt(params[1], 10)
 
+		if (isNaN(wcoinAmount) || wcoinAmount <= 0) {
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, ❌ Укажите корректную сумму для ставки.`
+			)
+			return
+		}
+
 		console.log(`Creating room: ${roomName} with amount: ${wcoinAmount}`)
 		await createRoom(context, roomName, userId, wcoinAmount)
 	} else if (command === 'пригласить') {
 		if (params.length < 1) {
 			await context.send(
-				`${await getUserMention(userId)}, ❌ Неправильно указаны параметры. Используйте: /wbar пригласить [пользователь]`
+				`${await getUserMention(
+					userId
+				)}, ❌ Неправильно указаны параметры. Используйте: /wbar пригласить [пользователь]`
 			)
 			return
 		}
@@ -750,7 +940,9 @@ async function handleWBarCommand(context, command, params) {
 	} else if (command === 'принять') {
 		if (params.length < 1) {
 			await context.send(
-				`${await getUserMention(userId)}, ❌ Неправильно указаны параметры. Используйте: /wbar принять [название_комнаты]`
+				`${await getUserMention(
+					userId
+				)}, ❌ Неправильно указаны параметры. Используйте: /wbar принять [название_комнаты]`
 			)
 			return
 		}
@@ -761,19 +953,80 @@ async function handleWBarCommand(context, command, params) {
 	} else if (command === 'отмена') {
 		// Cancel room creation
 		await cancelRoomCreation(context, userId)
+	} else if (command === 'комнаты') {
+		await listRooms(context)
 	} else {
 		// Handle unknown command
 		await context.send(
-			`${await getUserMention(userId)}, ❌ Неправильно указана команда. Используйте: /wbar создать [название_комнаты] [сумма], /wbar пригласить [пользователь]\n\nПрисоединиться к комнате для игры:\n/wbar принять [название], или /wbar отмена`
+			`${await getUserMention(
+				userId
+			)}, ❌ Неправильно указана команда. Используйте: /wbar создать [название_комнаты] [сумма], /wbar пригласить [пользователь]\n\nПрисоединиться к комнате для игры:\n/wbar принять [название], или /wbar отмена\nПосмотреть список комнат: /wbar комнаты`
 		)
-	}
+	} 
+}
+
+async function getUserNickname(vk_id) {
+    return new Promise((resolve, reject) => {
+        db.get(
+            `SELECT nickname FROM users WHERE vk_id = ?`,
+            [vk_id],
+            (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(row ? row.nickname : 'Неизвестно');
+            }
+        );
+    });
+}
+
+async function listRooms(context) {
+	db.all(
+		`SELECT room_name, wcoin_amount, creator_id FROM rooms WHERE status = 'open'`,
+		async (err, rows) => {
+			if (err) {
+				console.error('Ошибка при получении списка комнат:', err)
+				await context.send(`❌ Не удалось получить список комнат.`)
+				return
+			}
+
+			if (rows.length === 0) {
+				await context.send(`❌ На данный момент нет доступных комнат.`)
+				return
+			}
+
+			// Создаем массив промисов для получения никнеймов создателей комнат
+			const roomListPromises = rows.map(async room => {
+				try {
+					const nickname = await getUserNickname(room.creator_id)
+					return `Название: ${room.room_name}, Ставка: ${room.wcoin_amount} WCoin, Ожидает: ${nickname}.`
+				} catch (error) {
+					console.error('Ошибка при получении никнейма пользователя:', error)
+					return `Название: ${room.room_name}, Ставка: ${room.wcoin_amount} WCoin, Ожидает: (неизвестно).`
+				}
+			})
+
+			try {
+				const roomList = await Promise.all(roomListPromises)
+				await context.send(
+					`📋 Список доступных комнат:\n${roomList.join(
+						'\n'
+					)}\n\nНапиши: /wbar принять [название_комнаты]`
+				)
+			} catch (error) {
+				console.error('Ошибка при формировании списка комнат:', error)
+				await context.send(`❌ Не удалось сформировать список комнат.`)
+			}
+		}
+	)
 }
 
 async function cancelRoomCreation(context, userId) {
 	return new Promise((resolve, reject) => {
 		// Find the latest room created by the user
 		db.get(
-			`SELECT id, room_name FROM rooms 
+			`SELECT id, room_name, wcoin_amount FROM rooms 
             WHERE creator_id = ? AND status = 'open'
             ORDER BY id DESC
             LIMIT 1`,
@@ -790,26 +1043,31 @@ async function cancelRoomCreation(context, userId) {
 					return
 				}
 
-				// Cancel the room
-				db.run(`DELETE FROM rooms WHERE id = ?`, [room.id], err => {
-					if (err) {
-						reject(err)
-						return
-					}
+				// Refund WCoin to the user
+				updateUserWcoin(userId, room.wcoin_amount)
+					.then(() => {
+						// Cancel the room
+						db.run(`DELETE FROM rooms WHERE id = ?`, [room.id], err => {
+							if (err) {
+								reject(err)
+								return
+							}
 
-					context.send(`✅ Комната "${room.room_name}" удалена.`)
-					resolve()
-				})
+							context.send(
+								`✅ Комната "${room.room_name}" удалена, WCoin возвращены.`
+							)
+							resolve()
+						})
+					})
+					.catch(reject)
 			}
 		)
 	})
 }
 
-
 // Function to invite a user to a room
 async function inviteToRoom(context, inviterId, invitedUserId) {
 	return new Promise((resolve, reject) => {
-		// Check if the inviter is already in any room
 		db.get(
 			`SELECT id, room_name, wcoin_amount FROM rooms 
             WHERE creator_id = ? AND player2_id IS NULL AND status = 'open'`,
@@ -825,13 +1083,17 @@ async function inviteToRoom(context, inviterId, invitedUserId) {
 					return
 				}
 
-				await context.send(`Вас пригласили в комнату ${room.room_name} на ставку ${room.wcoin_amount}.\n 
-                    Если вы согласны, напишите: /wbar принять ${room.room_name}`)
+				// Get the mention of the invited user
+				const invitedUserMention = await getUserMention(invitedUserId)
+
+				await context.send(
+					`${invitedUserMention}, вас пригласили в комнату с названием: ${room.room_name}, на ставку: ${room.wcoin_amount} WCoin.\n` +
+						`Если вы согласны, напишите: /wbar принять ${room.room_name}`
+				)
 			}
 		)
 	})
 }
-
 
 // Function to accept the room invitation
 async function acceptRoomInvitation(context, userId, roomName) {
@@ -848,7 +1110,11 @@ async function acceptRoomInvitation(context, userId, roomName) {
 				}
 
 				if (!room) {
-					await context.send(`${await getUserMention(userId)}, 🍷 Комната ${roomName} не найдена или уже закрыта.`)
+					await context.send(
+						`${await getUserMention(
+							userId
+						)}, 🍷 Комната ${roomName} не найдена или уже закрыта.`
+					)
 					return
 				}
 
@@ -877,21 +1143,30 @@ async function acceptRoomInvitation(context, userId, roomName) {
 						}
 
 						// Implement game logic here
-						const winnerId = Math.random() < 0.5 ? room.player1_id : userId
+						const winnerId = Math.random() < 0.5 ? room.creator_id : userId
 						const loserId =
-							winnerId === room.player1_id ? userId : room.player1_id
-
+							winnerId === room.creator_id ? userId : room.creator_id
 						const wcoinAmount = room.wcoin_amount
-						await updateUserWcoin(winnerId, wcoinAmount)
-						await updateUserWcoin(loserId, -wcoinAmount)
 
-						await context.send(
-							`Вы приняли приглашение, ставка сыграла в пользу ${
-								winnerId === room.player1_id
-									? 'игрока, который создал комнату'
-									: 'вашей'
-							}. Вы выиграли ${wcoinAmount} WCoin!`
-						)
+						try {
+							if (winnerId === room.creator_id) {
+								// Creator wins
+								await updateUserWcoin(winnerId, wcoinAmount * 2) // Add the full stake amount as a win to the creator's balance
+								await updateUserWcoin(loserId, -wcoinAmount) 
+								await context.send(
+									`Вы приняли приглашение, ставка сыграла в пользу игрока, который создал комнату. Вы выиграли ${wcoinAmount} WCoin!`
+								)
+							} else {
+								// Creator loses
+								await updateUserWcoin(userId, wcoinAmount) // Add the stake amount to the winner's balance
+								// No deduction for the creator's balance
+								await context.send(
+									`Вы приняли приглашение, ставка сыграла в вашу пользу. Вы выиграли ${wcoinAmount} WCoin!`
+								)
+							}
+						} catch (error) {
+							console.error('Error updating user balance:', error)
+						}
 
 						// Close the room (delete from database)
 						db.run(`DELETE FROM rooms WHERE id = ?`, [room.id], err => {
@@ -911,6 +1186,121 @@ vk.updates.on('message_new', async context => {
 	const userId = context.senderId
 	await updateUserRating(userId, 1)
 	await updateUserWcoin(userId, 1)
+
+	if (message.startsWith('/купить лопату ')) {
+		const shovelType = message.split(' ')[2]
+
+		if (!shovelPrices[shovelType]) {
+			await context.send(
+				`${await getUserMention(userId)}, Неверный тип лопаты.`
+			)
+			return
+		}
+
+		const user = await getUser(userId)
+
+		if (!user) {
+			await context.send(
+				`${await getUserMention(userId)}, Пользователь не найден.`
+			)
+			return
+		}
+
+		// Убедитесь, что запись о лопате существует
+		await ensureUserShovels(userId)
+
+		const currentTimestamp = await getTimestampNow()
+		const lastPurchaseTimestamp = user.last_shovel_purchase_timestamp || 0
+
+		if (currentTimestamp < lastPurchaseTimestamp + twoHours) {
+			const secondsUntilNextPurchase =
+				lastPurchaseTimestamp + twoHours - currentTimestamp
+			const minutesUntilNextPurchase = Math.ceil(secondsUntilNextPurchase / 60)
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, ❌ Вы уже покупали лопату. Следующую лопату можно купить через ${minutesUntilNextPurchase} минут.`
+			)
+			return
+		}
+
+		const shovelPrice = shovelPrices[shovelType]
+
+		if (user.wcoin < shovelPrice) {
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, ❌ У вас недостаточно WCoin для покупки этой лопаты.`
+			)
+			return
+		}
+
+		await updateUserWcoin(userId, -shovelPrice)
+		await updateUserShovels(userId, shovelType, 1)
+		await updateLastShovelPurchaseTimestamp(userId, currentTimestamp)
+		await context.send(
+			`${await getUserMention(
+				userId
+			)}, ✅ Вы успешно купили ${shovelType} лопату за ${shovelPrice} WCoin.`
+		)
+	}
+
+	if (message.startsWith('/лопаты')) {
+		const userShovels = await getUserShovels(userId)
+
+		if (!userShovels) {
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, Ошибка при получении данных о лопатах.`
+			)
+			return
+		}
+
+		const userShovelsDisplay = `
+        🥄 Обычные: ${userShovels.common}
+        💍 Серебряные: ${userShovels.silver}
+        🔱 Золотые: ${userShovels.gold}
+        🔱 Платиновые: ${userShovels.platinum}
+        👑 Wayne: ${userShovels.wayne}
+    `
+
+		await context.send(
+			`${await getUserMention(userId)}, 🥄 Ваши лопаты:\n${userShovelsDisplay}\n\nДля покупки используй: /купить лопату [название_лопаты].`
+		)
+	}
+
+
+	if (message.startsWith('/копать клад ')) {
+		const shovelType = message.split(' ')[2]
+		const shovel = shovelRewards[shovelType]
+
+		if (!shovel) {
+			await context.send(
+				`${await getUserMention(userId)}, ❌ Неверный тип лопаты.`
+			)
+			return
+		}
+
+		// Получаем данные о лопатах пользователя
+		const userShovels = await getUserShovels(userId)
+		if (!userShovels || userShovels[shovelTypes[shovelType]] <= 0) {
+			await context.send(
+				`${await getUserMention(userId)}, ❌ У вас нет ${shovelType} лопаты.`
+			)
+			return
+		}
+
+		// Выполняем действие по копанию
+		const reward = calculateReward(shovel)
+		await context.send(
+			`${await getUserMention(userId)}, 🤑 Вы нашли клад! Ваш приз: ${reward} WCoin.`
+		)
+
+		// Уменьшаем количество использованных лопат и обновляем данные
+		await updateUserShovels(userId, shovelType, -1)
+		await updateUserRewards(userId, reward)
+	}
 
 	if (message.startsWith('/wbar')) {
 		const parts = message.split(' ')
@@ -944,7 +1334,7 @@ vk.updates.on('message_new', async context => {
 			await context.send(
 				`${await getUserMention(
 					userId
-				)}, 🎉 Вы успешно зарегистрированы!\n⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n📦Кейсы:\n🎰"кейсы"\n💳"купить кейс"\n✂📦"открыть кейс [название]"\n\n🎱Развлечения:\n\n🎲"бар [wbar]"\n💎"бонус"\n\n📭Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь".\n\n🔮VIP🔮\n👘"мерч"`
+				)}, 🎉 Вы успешно зарегистрированы!\n⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n🏪WShop:\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n\n🛠Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"`
 			)
 			delete registrationStates[userId]
 		}
@@ -1145,13 +1535,13 @@ vk.updates.on('message_new', async context => {
 		await context.send(
 			`${await getUserMention(
 				userId
-			)}, ⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n📦Кейсы:\n🎰"кейсы"\n💳"купить кейс"\n✂📦"открыть кейс [название]"\n\n🎱Развлечения:\n🎲"бар [wbar]"\n💎"бонус"\n\n📭Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"`
+			)}, ⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n🏪WShop:\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n\n🛠Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"`
 		)
 	} else if (message.startsWith('/правила')) {
 		await context.send(
 			`${await getUserMention(
 				userId
-			)}, ‼ не знание правил - не освобождает от ответственности. Любые ваши действия, нарушающие правила акции/бота/конкурса проекта Waynes, повлечет собой: предупреждение, обнуление, блокировку аккаунта.\n\n📌1.1 Запрещено спамить/флудить и писать бесмысленные сообщения, которые имеют цель, накрутить игровую валюту.\n📌1.2 Запрещено обманывать, прикреплять фотошопленные, старые док-ва выигрыша для получения приза.\n📌1.3 Запрещено вводить в заблуждение игроков, просить данные, пользоваться проектом Waynes в своих целях.\n\n⛔ЗАПОМНИТЕ⛔ - модерация Waynes не напишет вам в личные сообщения о выигрыша приза или раздачи промокода. 📖Вся актуальная информация высылается из официальных источников, либо письмом в официальную группу. Модерация не просит ваши личные данные/аккаунта от ORP, чтобы выплатить приз.\n\n⛔Неправильно указана команда. Используйте: /wbar создать [название] [сумма], /wbar пригласить [пользователь], /wbar принять [название], или /wbar отмена.\n\n⛔Неправильно указаны параметры. Используйте: /wbar создать [название] [сумма]`
+			)}, ‼ не знание правил - не освобождает от ответственности. Любые ваши действия, нарушающие правила акции/бота/конкурса проекта Waynes, повлечет собой: предупреждение, обнуление, блокировку аккаунта.\n\n📌1.1 Запрещено спамить/флудить и писать бесмысленные сообщения, которые имеют цель, накрутить игровую валюту.\n📌1.2 Запрещено обманывать, прикреплять фотошопленные, старые док-ва выигрыша для получения приза.\n📌1.3 Запрещено вводить в заблуждение игроков, просить данные, пользоваться проектом Waynes в своих целях.\n\n⛔ЗАПОМНИТЕ⛔ - модерация Waynes не напишет вам в личные сообщения о выигрыша приза или раздачи промокода. 📖Вся актуальная информация высылается из официальных источников, либо письмом в официальную группу. Модерация не просит ваши личные данные/аккаунта от ORP, чтобы выплатить приз.`
 		)
 	} else if (message.startsWith('/помощь')) {
 		await context.send(
@@ -1166,7 +1556,7 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.0.3`)
+		await context.send(`1.0.4`)
 	} else if (message.startsWith('/рефералка')) {
 		await context.send(
 			`${await getUserMention(
@@ -1179,6 +1569,8 @@ vk.updates.on('message_new', async context => {
 				userId
 			)}, У нас есть свой мерч! Покупай худи по цене ниже рынка и получай яркие эмоции по уличной прогулке или по дороге домой. Выделяйся с толпы вместе с нами!\n\nУ вас есть возможность купить даже за WCoin = 65.000, а если не хотите долго ждать = 2799р!\n\nПодробнее в нашей официальной группе.`
 		)
+	} else if (message.startsWith('/клады')) {
+		await context.send(`${await getUserMention(userId)}, По миру найдено много кладов, покупай лопату и скорей за работу!\nИспользуй команду: /копать клад [название_лопаты].`)
 	}
 })
 
