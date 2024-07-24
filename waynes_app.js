@@ -10,7 +10,7 @@ const vk = new VK({
 const db = new sqlite3.Database('users.db')
 
 const oneHour = 3600 // 1 час в секундах
-const twoHours = 7200; // 2 часа в секундах
+const twoHours = 7200 // 2 часа в секундах
 
 db.serialize(() => {
 	db.run(
@@ -44,6 +44,7 @@ db.serialize(() => {
 	)
 })
 
+// Shovels
 const shovelPrices = {
 	обычная: 20,
 	серебряная: 50,
@@ -52,7 +53,6 @@ const shovelPrices = {
 	wayneлопата: 700,
 }
 
-// Призы и попытки лопат
 const shovelRewards = {
 	обычная: { attempts: 1, min: 10, max: 35 },
 	серебряная: { attempts: 1, min: 40, max: 65 },
@@ -69,6 +69,7 @@ const shovelTypes = {
 	wayneлопата: 'wayne',
 }
 
+// Cases
 const caseRewards = {
 	common: {
 		wcoin: [60, 90, 100],
@@ -127,6 +128,9 @@ const caseTypes = {
 	wayne: 'wayne',
 }
 
+const registrationStates = {}
+
+// Randomaizer (1 Cases) (2 Shovels)
 function getRandomReward(caseType) {
 	const rewards = caseRewards[caseType]
 	const allRewards = rewards.wcoin.concat(rewards.items)
@@ -136,6 +140,15 @@ function getRandomReward(caseType) {
 	return reward
 }
 
+// Функция для вычисления приза
+function calculateReward(shovel) {
+	const min = shovel.min
+	const max = shovel.max
+	const reward = Math.floor(Math.random() * (max - min + 1)) + min
+	return reward
+}
+
+// Account
 // Функция обновления баланса WCoin
 async function updateUserWcoin(userId, amount) {
 	return new Promise((resolve, reject) => {
@@ -150,30 +163,14 @@ async function updateUserWcoin(userId, amount) {
 	})
 }
 
-// Функция для вычисления приза
-function calculateReward(shovel) {
-    const min = shovel.min;
-    const max = shovel.max;
-    const reward = Math.floor(Math.random() * (max - min + 1)) + min;
-    return reward;
-}
-
-async function updateUserShovels(vk_id, shovelType, increment) {
+async function updateUserNickname(vk_id, newNickname) {
 	return new Promise((resolve, reject) => {
-		const column = shovelTypes[shovelType]
-		if (!column) {
-			return reject(new Error('Неверный тип лопаты'))
-		}
-
-		const sql = `UPDATE shovels SET ${column} = ${column} + ? WHERE vk_id = ?`
-		console.log(`Executing SQL: ${sql}`)
-
-		const stmt = db.prepare(sql)
-		stmt.run(increment, vk_id, function (err) {
+		const stmt = db.prepare('UPDATE users SET nickname = ? WHERE vk_id = ?')
+		stmt.run(newNickname, vk_id, function (err) {
 			if (err) {
 				reject(err)
 			} else {
-				console.log(`Updated shovel count (${shovelType}) for user ${vk_id}`)
+				console.log(`Ник пользователя ${vk_id} изменен на ${newNickname}`)
 				resolve()
 			}
 		})
@@ -191,39 +188,6 @@ async function updateUserRewards(vk_id, reward) {
 				reject(err)
 			} else {
 				console.log(`Обновлено количество WCoin для пользователя ${vk_id}`)
-				resolve()
-			}
-		})
-		stmt.finalize()
-	})
-}
-
-async function ensureUserShovels(vk_id) {
-	const userShovels = await getUserShovels(vk_id)
-
-	if (!userShovels) {
-		// Пользователя нет в таблице `shovels`, создадим его
-		return new Promise((resolve, reject) => {
-			db.run('INSERT INTO shovels (vk_id) VALUES (?)', [vk_id], function (err) {
-				if (err) {
-					reject(err)
-				} else {
-					resolve()
-				}
-			})
-		})
-	}
-}
-
-
-async function updateUserNickname(vk_id, newNickname) {
-	return new Promise((resolve, reject) => {
-		const stmt = db.prepare('UPDATE users SET nickname = ? WHERE vk_id = ?')
-		stmt.run(newNickname, vk_id, function (err) {
-			if (err) {
-				reject(err)
-			} else {
-				console.log(`Ник пользователя ${vk_id} изменен на ${newNickname}`)
 				resolve()
 			}
 		})
@@ -271,6 +235,84 @@ async function resolveUserId(target) {
 	return null
 }
 
+async function getUser(vk_id) {
+	return new Promise((resolve, reject) => {
+		db.get('SELECT * FROM users WHERE vk_id = ?', [vk_id], (err, row) => {
+			if (err) {
+				reject(err)
+			} else {
+				// Если пользователь не найден, возвращаем null
+				if (!row) {
+					resolve(null)
+				} else {
+					// Если last_shovel_purchase_timestamp отсутствует, устанавливаем его в 0
+					if (!row.last_shovel_purchase_timestamp) {
+						row.last_shovel_purchase_timestamp = 0
+					}
+					resolve(row)
+				}
+			}
+		})
+	})
+}
+
+async function addUser(vk_id, nickname, status, wcoin) {
+	return new Promise((resolve, reject) => {
+		const stmt = db.prepare(
+			'INSERT INTO users (vk_id, nickname, status, wcoin) VALUES (?, ?, ?, ?)'
+		)
+		stmt.run(vk_id, nickname, status, wcoin, function (err) {
+			if (err) {
+				reject(err)
+			} else {
+				console.log(`Добавлен пользователь ${vk_id} с WCoin: ${wcoin}`)
+				resolve()
+			}
+		})
+		stmt.finalize()
+	})
+}
+
+async function getAllUsers() {
+	return new Promise((resolve, reject) => {
+		db.all('SELECT * FROM users', (err, rows) => {
+			if (err) {
+				reject(err)
+			} else {
+				resolve(rows)
+			}
+		})
+	})
+}
+
+async function getUserWcoin(userId) {
+	return new Promise((resolve, reject) => {
+		db.get(`SELECT wcoin FROM users WHERE vk_id = ?`, [userId], (err, row) => {
+			if (err) {
+				reject(err)
+				return
+			}
+			resolve(row ? row.wcoin : 0)
+		})
+	})
+}
+
+async function getUserNickname(vk_id) {
+	return new Promise((resolve, reject) => {
+		db.get(
+			`SELECT nickname FROM users WHERE vk_id = ?`,
+			[vk_id],
+			(err, row) => {
+				if (err) {
+					reject(err)
+					return
+				}
+				resolve(row ? row.nickname : 'Неизвестно')
+			}
+		)
+	})
+}
+
 // Обновление функции handle выдачи WCoin
 async function handleGrantWcoin(context, target, wcoinAmount) {
 	const wcoin = parseInt(wcoinAmount, 10)
@@ -309,57 +351,7 @@ async function handleGrantWcoin(context, target, wcoinAmount) {
 	}
 }
 
-async function addUser(vk_id, nickname, status, wcoin) {
-	return new Promise((resolve, reject) => {
-		const stmt = db.prepare(
-			'INSERT INTO users (vk_id, nickname, status, wcoin) VALUES (?, ?, ?, ?)'
-		)
-		stmt.run(vk_id, nickname, status, wcoin, function (err) {
-			if (err) {
-				reject(err)
-			} else {
-				console.log(`Добавлен пользователь ${vk_id} с WCoin: ${wcoin}`)
-				resolve()
-			}
-		})
-		stmt.finalize()
-	})
-}
-
-async function getUser(vk_id) {
-	return new Promise((resolve, reject) => {
-		db.get('SELECT * FROM users WHERE vk_id = ?', [vk_id], (err, row) => {
-			if (err) {
-				reject(err)
-			} else {
-				// Если пользователь не найден, возвращаем null
-				if (!row) {
-					resolve(null)
-				} else {
-					// Если last_shovel_purchase_timestamp отсутствует, устанавливаем его в 0
-					if (!row.last_shovel_purchase_timestamp) {
-						row.last_shovel_purchase_timestamp = 0
-					}
-					resolve(row)
-				}
-			}
-		})
-	})
-}
-
-async function getUserShovels(vk_id) {
-	return new Promise((resolve, reject) => {
-		db.get('SELECT * FROM shovels WHERE vk_id = ?', [vk_id], (err, row) => {
-			if (err) {
-				console.error(`Error retrieving user shovels: ${err.message}`)
-				reject(err)
-			} else {
-				console.log(`Retrieved user shovels: ${JSON.stringify(row)}`)
-				resolve(row)
-			}
-		})
-	})
-}
+// Promocode
 
 async function addPromocode(code, wcoin) {
 	return new Promise((resolve, reject) => {
@@ -437,6 +429,8 @@ async function markPromocodeAsUsed(user_id, code) {
 	})
 }
 
+// Bonus and Interval shovels
+
 async function updateLastBonusTimestamp(vk_id, timestamp) {
 	return new Promise((resolve, reject) => {
 		const stmt = db.prepare(
@@ -473,47 +467,116 @@ async function getTimestampNow() {
 	return Math.floor(Date.now() / 1000) // Получаем текущий timestamp в секундах
 }
 
-async function getAllUsers() {
-	return new Promise((resolve, reject) => {
-		db.all('SELECT * FROM users', (err, rows) => {
-			if (err) {
-				reject(err)
-			} else {
-				resolve(rows)
-			}
-		})
-	})
-}
-
 async function handleBonusCommand(context) {
-    const userId = context.senderId
-    const user = await getUser(userId)
+	const userId = context.senderId
+	const user = await getUser(userId)
 
-    if (!user) {
-        await context.send(
-            `${await getUserMention(userId)}, 📄 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
-        )
-        return
-    }
+	if (!user) {
+		await context.send(
+			`${await getUserMention(
+				userId
+			)}, 📄 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
+		)
+		return
+	}
 
-    const currentTimestamp = await getTimestampNow()
-    const lastBonusTimestamp = user.last_bonus_timestamp
+	const currentTimestamp = await getTimestampNow()
+	const lastBonusTimestamp = user.last_bonus_timestamp
 
-    if (currentTimestamp < lastBonusTimestamp + oneHour) {
-        const secondsUntilNextBonus = lastBonusTimestamp + oneHour - currentTimestamp
-        const minutesUntilNextBonus = Math.ceil(secondsUntilNextBonus / 60)
-        await context.send(
-            `${await getUserMention(userId)}, 🗿 Вы уже получили бонус. Следующий бонус будет доступен через ${minutesUntilNextBonus} минут.`
-        )
-    } else {
-        const bonusAmount = 35
-        await updateUserWcoin(userId, bonusAmount) // Передаем изменение баланса
-        await updateLastBonusTimestamp(userId, currentTimestamp)
-        const updatedUser = await getUser(userId) // Получаем обновленные данные пользователя
-        await context.send(`${await getUserMention(userId)}, 🌟 Вы получили 35 WCoin! Теперь у вас ${updatedUser.wcoin} WCoin.`)
-    }
+	if (currentTimestamp < lastBonusTimestamp + oneHour) {
+		const secondsUntilNextBonus =
+			lastBonusTimestamp + oneHour - currentTimestamp
+		const minutesUntilNextBonus = Math.ceil(secondsUntilNextBonus / 60)
+		await context.send(
+			`${await getUserMention(
+				userId
+			)}, 🗿 Вы уже получили бонус. Следующий бонус будет доступен через ${minutesUntilNextBonus} минут.`
+		)
+	} else {
+		const bonusAmount = 35
+		await updateUserWcoin(userId, bonusAmount) // Передаем изменение баланса
+		await updateLastBonusTimestamp(userId, currentTimestamp)
+		const updatedUser = await getUser(userId) // Получаем обновленные данные пользователя
+		await context.send(
+			`${await getUserMention(userId)}, 🌟 Вы получили 35 WCoin! Теперь у вас ${
+				updatedUser.wcoin
+			} WCoin.`
+		)
+	}
 }
 
+// Hi and link
+
+async function getUserMention(vk_id) {
+	const user = await getUser(vk_id)
+	if (user) {
+		return `[id${vk_id}|${user.nickname}]`
+	} else {
+		return `[id${vk_id}|Пользователь]` // fallback, если пользователь не найден
+	}
+}
+
+// Общая функция для обработки приветствия нового пользователя
+async function handleUserJoin(context, userId) {
+	if (userId !== context.senderId) {
+		const userMention = await getUserMention(userId)
+		await context.send(
+			`Добро пожаловать, ${userMention}!\n\nМы рады, что ты выбрал нас. Скорей регистрируйся в нашем боте по команде "/reg", вписывай промокод — "#waynes" и получай бесплатный кейс для получения приза!\nЧем больше ты общаешься в нашем боте, тем больше зарабатываешь WCoin, покупай кейсы и получай призы!`
+		)
+	}
+}
+
+// Обработка события, когда пользователя приглашают в чат
+vk.updates.on('chat_invite_user', async context => {
+	try {
+		console.log('chat_invite_user event detected')
+		const userId = context.eventMemberId
+		await handleUserJoin(context, userId)
+	} catch (error) {
+		console.error('Ошибка при обработке события chat_invite_user:', error)
+	}
+})
+
+// Обработка события, когда пользователь заходит в чат по ссылке
+vk.updates.on('chat_join_user', async context => {
+	try {
+		console.log('chat_join_user event detected')
+		const userId = context.memberId
+		await handleUserJoin(context, userId)
+	} catch (error) {
+		console.error('Ошибка при обработке события chat_join_user:', error)
+	}
+})
+
+// Обработка события, когда пользователя приглашают в чат по ссылке
+vk.updates.on('chat_invite_user_by_link', async context => {
+	try {
+		console.log('chat_invite_user_by_link event detected')
+		const userId = context.memberId
+		await handleUserJoin(context, userId)
+	} catch (error) {
+		console.error(
+			'Ошибка при обработке события chat_invite_user_by_link:',
+			error
+		)
+	}
+})
+
+// Обработка события, когда пользователя приглашают в чат через сообщение
+vk.updates.on('chat_invite_user_by_message_request', async context => {
+	try {
+		console.log('chat_invite_user_by_message_request event detected')
+		const userId = context.memberId
+		await handleUserJoin(context, userId)
+	} catch (error) {
+		console.error(
+			'Ошибка при обработке события chat_invite_user_by_message_request:',
+			error
+		)
+	}
+})
+
+// Cases command
 
 async function addUserCases(vk_id) {
 	return new Promise((resolve, reject) => {
@@ -579,13 +642,19 @@ async function handleBuyCaseCommand(context, caseType, casePrice) {
 
 	if (!user) {
 		await context.send(
-			`${await getUserMention(userId)}, 📄 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
+			`${await getUserMention(
+				userId
+			)}, 📄 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
 		)
 		return
 	}
 
 	if (user.wcoin < casePrice) {
-		await context.send(`${await getUserMention(userId)}, ❌ У вас недостаточно WCoin для покупки этого кейса.`)
+		await context.send(
+			`${await getUserMention(
+				userId
+			)}, ❌ У вас недостаточно WCoin для покупки этого кейса.`
+		)
 		return
 	}
 
@@ -599,7 +668,9 @@ async function handleBuyCaseCommand(context, caseType, casePrice) {
 	const newBalance = user.wcoin - casePrice
 
 	await context.send(
-		`${await getUserMention(userId)}, 🎉 Вы успешно купили ${caseType} кейс за ${casePrice} WCoin. У вас осталось ${newBalance} WCoin.`
+		`${await getUserMention(
+			userId
+		)}, 🎉 Вы успешно купили ${caseType} кейс за ${casePrice} WCoin. У вас осталось ${newBalance} WCoin.`
 	)
 }
 
@@ -664,71 +735,6 @@ async function updateDatabaseAfterOpening(userId, caseType, reward) {
 	}
 }
 
-const registrationStates = {}
-
-async function getUserMention(vk_id) {
-	const user = await getUser(vk_id)
-	if (user) {
-		return `[id${vk_id}|${user.nickname}]`
-	} else {
-		return `[id${vk_id}|Пользователь]` // fallback, если пользователь не найден
-	}
-}
-
-// Общая функция для обработки приветствия нового пользователя
-async function handleUserJoin(context, userId) {
-	if (userId !== context.senderId) {
-		const userMention = await getUserMention(userId);
-		await context.send(
-			`Добро пожаловать, ${userMention}!\n\nМы рады, что ты выбрал нас. Скорей регистрируйся в нашем боте по команде "/reg", вписывай промокод — "#waynes" и получай бесплатный кейс для получения приза!\nЧем больше ты общаешься в нашем боте, тем больше зарабатываешь WCoin, покупай кейсы и получай призы!`
-		);
-	}
-}
-
-// Обработка события, когда пользователя приглашают в чат
-vk.updates.on('chat_invite_user', async (context) => {
-	try {
-		console.log('chat_invite_user event detected');
-		const userId = context.eventMemberId;
-		await handleUserJoin(context, userId);
-	} catch (error) {
-		console.error('Ошибка при обработке события chat_invite_user:', error);
-	}
-});
-
-// Обработка события, когда пользователь заходит в чат по ссылке
-vk.updates.on('chat_join_user', async (context) => {
-	try {
-		console.log('chat_join_user event detected');
-		const userId = context.memberId;
-		await handleUserJoin(context, userId);
-	} catch (error) {
-		console.error('Ошибка при обработке события chat_join_user:', error);
-	}
-});
-
-// Обработка события, когда пользователя приглашают в чат по ссылке
-vk.updates.on('chat_invite_user_by_link', async (context) => {
-	try {
-		console.log('chat_invite_user_by_link event detected');
-		const userId = context.memberId;
-		await handleUserJoin(context, userId);
-	} catch (error) {
-		console.error('Ошибка при обработке события chat_invite_user_by_link:', error);
-	}
-});
-
-// Обработка события, когда пользователя приглашают в чат через сообщение
-vk.updates.on('chat_invite_user_by_message_request', async (context) => {
-	try {
-		console.log('chat_invite_user_by_message_request event detected');
-		const userId = context.memberId;
-		await handleUserJoin(context, userId);
-	} catch (error) {
-		console.error('Ошибка при обработке события chat_invite_user_by_message_request:', error);
-	}
-});
-
 async function handleTransferWcoin(context, target, wcoinAmount) {
 	const wcoin = parseInt(wcoinAmount, 10)
 	const userId = context.senderId
@@ -755,7 +761,9 @@ async function handleTransferWcoin(context, target, wcoinAmount) {
 
 	if (user.wcoin < wcoin) {
 		await context.send(
-			`${await getUserMention(userId)}, 🗿 У вас недостаточно WCoin для передачи.`
+			`${await getUserMention(
+				userId
+			)}, 🗿 У вас недостаточно WCoin для передачи.`
 		)
 		return
 	}
@@ -780,27 +788,15 @@ async function handleTransferWcoin(context, target, wcoinAmount) {
 			userId
 		)}, 💸 Вы передали ${wcoin} WCoin пользователю ${await getUserMention(
 			targetUser.vk_id
-		)}. Ваш текущий баланс: ${updatedUser.wcoin} WCoin.\n👤 Баланс пользователя ${
-			targetUser.nickname
-		}: ${updatedTargetUser.wcoin} WCoin.`
+		)}. Ваш текущий баланс: ${
+			updatedUser.wcoin
+		} WCoin.\n👤 Баланс пользователя ${targetUser.nickname}: ${
+			updatedTargetUser.wcoin
+		} WCoin.`
 	)
 }
 
-async function getUserWcoin(userId) {
-	return new Promise((resolve, reject) => {
-		db.get(
-			`SELECT wcoin FROM users WHERE vk_id = ?`,
-			[userId],
-			(err, row) => {
-				if (err) {
-					reject(err)
-					return
-				}
-				resolve(row ? row.wcoin : 0)
-			}
-		)
-	})
-}
+// wbar
 
 async function createRoom(context, roomName, userId, wcoinAmount) {
 	return new Promise((resolve, reject) => {
@@ -879,7 +875,6 @@ async function createRoom(context, roomName, userId, wcoinAmount) {
 	})
 }
 
-
 async function handleWBarCommand(context, command, params) {
 	const userId = context.senderId
 	console.log(
@@ -889,7 +884,9 @@ async function handleWBarCommand(context, command, params) {
 	if (!command) {
 		// Handle case where command is missing or invalid
 		await context.send(
-			`${await getUserMention(userId)}, ❌ Неправильно указана команда. Используйте: /wbar создать [название_комнаты] [сумма], /wbar пригласить [пользователь], /wbar принять [название], или /wbar отмена.\nПосмотреть список комнат: /wbar комнаты`
+			`${await getUserMention(
+				userId
+			)}, ❌ Неправильно указана команда. Используйте: /wbar создать [название_комнаты] [сумма], /wbar пригласить [пользователь], /wbar принять [название], или /wbar отмена.\nПосмотреть список комнат: /wbar комнаты`
 		)
 		return
 	}
@@ -962,23 +959,7 @@ async function handleWBarCommand(context, command, params) {
 				userId
 			)}, ❌ Неправильно указана команда. Используйте: /wbar создать [название_комнаты] [сумма], /wbar пригласить [пользователь]\n\nПрисоединиться к комнате для игры:\n/wbar принять [название], или /wbar отмена\nПосмотреть список комнат: /wbar комнаты`
 		)
-	} 
-}
-
-async function getUserNickname(vk_id) {
-    return new Promise((resolve, reject) => {
-        db.get(
-            `SELECT nickname FROM users WHERE vk_id = ?`,
-            [vk_id],
-            (err, row) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                resolve(row ? row.nickname : 'Неизвестно');
-            }
-        );
-    });
+	}
 }
 
 async function listRooms(context) {
@@ -1152,16 +1133,16 @@ async function acceptRoomInvitation(context, userId, roomName) {
 							if (winnerId === room.creator_id) {
 								// Creator wins
 								await updateUserWcoin(winnerId, wcoinAmount * 2) // Add the full stake amount as a win to the creator's balance
-								await updateUserWcoin(loserId, -wcoinAmount) 
+								await updateUserWcoin(loserId, -wcoinAmount)
 								await context.send(
-									`Вы приняли приглашение, ставка сыграла в пользу игрока, который создал комнату. Вы выиграли ${wcoinAmount} WCoin!`
+									`Вы приняли приглашение, ставка сыграла в пользу игрока, который создал комнату. Вы выиграли ${wcoinAmount} WCoin!🥳`
 								)
 							} else {
 								// Creator loses
 								await updateUserWcoin(userId, wcoinAmount) // Add the stake amount to the winner's balance
 								// No deduction for the creator's balance
 								await context.send(
-									`Вы приняли приглашение, ставка сыграла в вашу пользу. Вы выиграли ${wcoinAmount} WCoin!`
+									`Вы приняли приглашение, ставка сыграла в вашу пользу. Вы выиграли ${wcoinAmount} WCoin!🥳`
 								)
 							}
 						} catch (error) {
@@ -1181,12 +1162,111 @@ async function acceptRoomInvitation(context, userId, roomName) {
 	})
 }
 
+// Shovels
+
+async function updateUserShovels(vk_id, shovelType, increment) {
+	return new Promise((resolve, reject) => {
+		const column = shovelTypes[shovelType]
+		if (!column) {
+			return reject(new Error('Неверный тип лопаты'))
+		}
+
+		const sql = `UPDATE shovels SET ${column} = ${column} + ? WHERE vk_id = ?`
+		console.log(`Executing SQL: ${sql}`)
+
+		const stmt = db.prepare(sql)
+		stmt.run(increment, vk_id, function (err) {
+			if (err) {
+				reject(err)
+			} else {
+				console.log(`Updated shovel count (${shovelType}) for user ${vk_id}`)
+				resolve()
+			}
+		})
+		stmt.finalize()
+	})
+}
+
+async function ensureUserShovels(vk_id) {
+	const userShovels = await getUserShovels(vk_id)
+
+	if (!userShovels) {
+		// Пользователя нет в таблице `shovels`, создадим его
+		return new Promise((resolve, reject) => {
+			db.run('INSERT INTO shovels (vk_id) VALUES (?)', [vk_id], function (err) {
+				if (err) {
+					reject(err)
+				} else {
+					resolve()
+				}
+			})
+		})
+	}
+}
+
+async function getUserShovels(vk_id) {
+	return new Promise((resolve, reject) => {
+		db.get('SELECT * FROM shovels WHERE vk_id = ?', [vk_id], (err, row) => {
+			if (err) {
+				console.error(`Error retrieving user shovels: ${err.message}`)
+				reject(err)
+			} else {
+				console.log(`Retrieved user shovels: ${JSON.stringify(row)}`)
+				resolve(row)
+			}
+		})
+	})
+}
+
+let currentQuest = null
+
 vk.updates.on('message_new', async context => {
 	const message = context.text
 	const userId = context.senderId
 	await updateUserRating(userId, 1)
 	await updateUserWcoin(userId, 1)
 
+	if (message.startsWith('/creatquest')) {
+		if (userId === 252840773) {
+			const questText = message.slice(12).trim()
+			currentQuest = questText
+			await context.send(
+				`${await getUserMention(userId)}, ✅ Событие успешно создано.`
+			)
+		} else {
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, 😡 У вас нет прав для выполнения этой команды.`
+			)
+		}
+	} else if (message.startsWith('/delquest')) {
+		if (userId === 252840773) {
+			currentQuest = null
+			await context.send(
+				`${await getUserMention(userId)}, 🗑 Событие успешно удалено.`
+			)
+		} else {
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, 😡 У вас нет прав для выполнения этой команды.`
+			)
+		}
+	} else if (message.startsWith('/событие')) {
+		if (currentQuest) {
+			await context.send(
+				`${await getUserMention(userId)}, 🔥 Текущее событие: ${currentQuest}`
+			)
+		} else {
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, 🙁 В данный момент нет активных событий, но он обязательно будет!`
+			)
+		}
+	}
+	
 	if (message.startsWith('/купить лопату ')) {
 		const shovelType = message.split(' ')[2]
 
@@ -1252,7 +1332,7 @@ vk.updates.on('message_new', async context => {
 			await context.send(
 				`${await getUserMention(
 					userId
-				)}, Ошибка при получении данных о лопатах.`
+				)}, Вы еще не купили лопату. Используй команду: купить лопату [название_лопаты].\n\nИнформация по лопатам:\nОбычная: 20 WCoin\nСеребряная: 50 WCoin\nЗолотая: 100 WCoin\nПлатиновая: 300 WCoin\nWayneлопата: 700 WCoin.`
 			)
 			return
 		}
@@ -1266,10 +1346,11 @@ vk.updates.on('message_new', async context => {
     `
 
 		await context.send(
-			`${await getUserMention(userId)}, 🥄 Ваши лопаты:\n${userShovelsDisplay}\n\nДля покупки используй: /купить лопату [название_лопаты].`
+			`${await getUserMention(
+				userId
+			)}, 🥄 Ваши лопаты:\n${userShovelsDisplay}\n\nДля покупки используй: /купить лопату [название_лопаты].\n\nИнформация по лопатам:\nОбычная: 20 WCoin\nСеребряная: 50 WCoin\nЗолотая: 100 WCoin\nПлатиновая: 300 WCoin\nWayneлопата: 700 WCoin.`
 		)
 	}
-
 
 	if (message.startsWith('/копать клад ')) {
 		const shovelType = message.split(' ')[2]
@@ -1294,7 +1375,9 @@ vk.updates.on('message_new', async context => {
 		// Выполняем действие по копанию
 		const reward = calculateReward(shovel)
 		await context.send(
-			`${await getUserMention(userId)}, 🤑 Вы нашли клад! Ваш приз: ${reward} WCoin.`
+			`${await getUserMention(
+				userId
+			)}, 🤑 Вы нашли клад! Ваш приз: ${reward} WCoin.`
 		)
 
 		// Уменьшаем количество использованных лопат и обновляем данные
@@ -1318,7 +1401,11 @@ vk.updates.on('message_new', async context => {
 		if (registrationStates[userId].step === 'nickname') {
 			registrationStates[userId].nickname = message
 			registrationStates[userId].step = 'promoCode'
-			await context.send(`${await getUserMention(userId)}, ↪ Введите промокод(вначале ставьте #, промо маленькими буквами), если он у вас есть:`)
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, ↪ Введите промокод(вначале ставьте #, промо маленькими буквами), если он у вас есть:`
+			)
 		} else if (registrationStates[userId].step === 'promoCode') {
 			const nickname = registrationStates[userId].nickname
 			const promoCode = message.trim().toLowerCase()
@@ -1334,7 +1421,7 @@ vk.updates.on('message_new', async context => {
 			await context.send(
 				`${await getUserMention(
 					userId
-				)}, 🎉 Вы успешно зарегистрированы!\n⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n🏪WShop:\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n\n🛠Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"`
+				)}, 🎉 Вы успешно зарегистрированы!\n⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n🏪WShop:\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n🔥"событие"\n\n🛠Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"`
 			)
 			delete registrationStates[userId]
 		}
@@ -1342,7 +1429,9 @@ vk.updates.on('message_new', async context => {
 		const user = await getUser(userId)
 
 		if (user) {
-			await context.send(`${await getUserMention(userId)}, 🗿 Вы уже зарегистрированы.`)
+			await context.send(
+				`${await getUserMention(userId)}, 🗿 Вы уже зарегистрированы.`
+			)
 		} else {
 			registrationStates[userId] = { step: 'nickname' }
 			await context.send(`${await getUserMention(userId)}, ↪ Введите ваш ник:`)
@@ -1352,21 +1441,31 @@ vk.updates.on('message_new', async context => {
 
 		if (user) {
 			await context.send(
-				`${await getUserMention(userId)}, Ваш профиль:\n🗿ID: ${user.vk_id}\n💎Ник: ${user.nickname}\n💸WCoin: ${user.wcoin}\n👑Рейтинг: ${user.rating}`
+				`${await getUserMention(userId)}, Ваш профиль:\n🗿ID: ${
+					user.vk_id
+				}\n💎Ник: ${user.nickname}\n💸WCoin: ${user.wcoin}\n👑Рейтинг: ${
+					user.rating
+				}`
 			)
 		} else {
 			await context.send(
-				`${await getUserMention(userId)}, 🗿 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
+				`${await getUserMention(
+					userId
+				)}, 🗿 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
 			)
 		}
 	} else if (message.startsWith('/выдать')) {
-        if (userId === 252840773) { // Проверка прав администратора
-            const [_, targetId, wcoinAmount] = message.split(' ');
-            await handleGrantWcoin(context, targetId, wcoinAmount);
-        } else {
-            await context.send(`${await getUserMention(userId)}, 😡 У вас нет прав для выполнения этой команды.`);
-        }
-
+		if (userId === 252840773) {
+			// Проверка прав администратора
+			const [_, targetId, wcoinAmount] = message.split(' ')
+			await handleGrantWcoin(context, targetId, wcoinAmount)
+		} else {
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, 😡 У вас нет прав для выполнения этой команды.`
+			)
+		}
 	} else if (message.startsWith('/creatpromo')) {
 		if (userId === 252840773) {
 			const [_, promoCode, wcoinAmount] = message.split(' ')
@@ -1374,16 +1473,24 @@ vk.updates.on('message_new', async context => {
 
 			if (isNaN(wcoin) || !promoCode) {
 				await context.send(
-					`${await getUserMention(userId)}, Неверный формат команды. Используйте: /creatpromo [код] [сумма]`
+					`${await getUserMention(
+						userId
+					)}, Неверный формат команды. Используйте: /creatpromo [код] [сумма]`
 				)
 			} else {
 				await addPromocode(promoCode, wcoin)
 				await context.send(
-					`${await getUserMention(userId)}, Промокод ${promoCode} создан с количеством WCoin: ${wcoin}.`
+					`${await getUserMention(
+						userId
+					)}, Промокод ${promoCode} создан с количеством WCoin: ${wcoin}.`
 				)
 			}
 		} else {
-			await context.send(`${await getUserMention(userId)}, 😡 У вас нет прав для выполнения этой команды.`)
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, 😡 У вас нет прав для выполнения этой команды.`
+			)
 		}
 	} else if (message.startsWith('/usepromo')) {
 		const [_, promoCode] = message.split(' ')
@@ -1479,7 +1586,9 @@ vk.updates.on('message_new', async context => {
 		const userCases = await getUserCases(userId)
 
 		if (!userCases) {
-			await context.send(`${await getUserMention(userId)}, 🗿 у вас еще нет купленных кейсов.`)
+			await context.send(
+				`${await getUserMention(userId)}, 🗿 у вас еще нет купленных кейсов.`
+			)
 		} else {
 			await context.send(`${await getUserMention(userId)}, 📦 Ваши кейсы:
                 📦Обычный: ${userCases.common}
@@ -1488,7 +1597,8 @@ vk.updates.on('message_new', async context => {
                 🎁Платиновый: ${userCases.platinum}
                 💼WayneCase: ${userCases.wayne}`)
 		}
-	} if (message === '/открыть кейс обычный') {
+	}
+	if (message === '/открыть кейс обычный') {
 		await handleCaseOpenCommand(context, 'обычный')
 	} else if (message === '/открыть кейс серебряный') {
 		await handleCaseOpenCommand(context, 'серебряный')
@@ -1535,9 +1645,9 @@ vk.updates.on('message_new', async context => {
 		await context.send(
 			`${await getUserMention(
 				userId
-			)}, ⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n🏪WShop:\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n\n🛠Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"`
+			)}, ⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n🏪WShop:\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n🔥"событие"\n\n🛠Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"`
 		)
-	} else if (message.startsWith('/правила')) {
+	}  else if (message.startsWith('/правила')) {
 		await context.send(
 			`${await getUserMention(
 				userId
@@ -1556,7 +1666,7 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.0.4`)
+		await context.send(`1.0.5`)
 	} else if (message.startsWith('/рефералка')) {
 		await context.send(
 			`${await getUserMention(
@@ -1570,11 +1680,13 @@ vk.updates.on('message_new', async context => {
 			)}, У нас есть свой мерч! Покупай худи по цене ниже рынка и получай яркие эмоции по уличной прогулке или по дороге домой. Выделяйся с толпы вместе с нами!\n\nУ вас есть возможность купить даже за WCoin = 65.000, а если не хотите долго ждать = 2799р!\n\nПодробнее в нашей официальной группе.`
 		)
 	} else if (message.startsWith('/клады')) {
-		await context.send(`${await getUserMention(userId)}, По миру найдено много кладов, покупай лопату и скорей за работу!\nИспользуй команду: /копать клад [название_лопаты].`)
+		await context.send(
+			`${await getUserMention(
+				userId
+			)}, По миру найдено много кладов, покупай лопату и скорей за работу!\nИспользуй команду: /копать клад [название_лопаты].`
+		)
 	}
 })
-
-
 
 async function updateUserRating(vk_id, ratingIncrement) {
 	return new Promise((resolve, reject) => {
