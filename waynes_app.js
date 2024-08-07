@@ -247,7 +247,19 @@ async function updateUserRewards(vk_id, reward) {
 }
 
 async function resolveUserId(target) {
-	if (target.startsWith('@')) {
+	if (target.startsWith('https://vk.com/')) {
+		const screenName = target.replace('https://vk.com/', '')
+		try {
+			const response = await vk.api.utils.resolveScreenName({
+				screen_name: screenName,
+			})
+			if (response.type === 'user') {
+				return response.object_id
+			}
+		} catch (error) {
+			console.error('Error resolving user ID by profile link:', error)
+		}
+	} else if (target.startsWith('@')) {
 		const screenName = target.slice(1)
 		try {
 			const response = await vk.api.users.get({ user_ids: screenName })
@@ -259,18 +271,6 @@ async function resolveUserId(target) {
 		}
 	} else if (!isNaN(target)) {
 		return parseInt(target, 10)
-	} else if (target.startsWith('https://vk.com/')) {
-		const screenName = target.slice(15) // remove "https://vk.com/"
-		try {
-			const response = await vk.api.utils.resolveScreenName({
-				screen_name: screenName,
-			})
-			if (response.type === 'user') {
-				return response.object_id
-			}
-		} catch (error) {
-			console.error('Error resolving user ID by profile link:', error)
-		}
 	} else {
 		try {
 			const response = await vk.api.utils.resolveScreenName({
@@ -284,6 +284,23 @@ async function resolveUserId(target) {
 		}
 	}
 	return null
+}
+
+async function getUserByName(username) {
+	return new Promise((resolve, reject) => {
+		db.get(
+			'SELECT vk_id FROM users WHERE nickname = ?',
+			[username],
+			(err, row) => {
+				if (err) {
+					console.error(err)
+					reject('Ошибка при получении данных о пользователе.')
+				} else {
+					resolve(row)
+				}
+			}
+		)
+	})
 }
 
 async function getUser(vk_id) {
@@ -1358,32 +1375,66 @@ async function listMarketItem(userId, itemName, quantity, price) {
 }
 
 async function removeMarketItem(userId, itemName) {
-	db.run(
-		'DELETE FROM market WHERE user_id = ? AND item_name = ?',
-		[userId, itemName],
-		err => {
-			if (err) {
-				console.error(err)
-				return '❌ Нет предмета на продаже.'
-			} else {
-				return 'Item removed successfully!'
+	const itemExists = await new Promise((resolve, reject) => {
+		db.get(
+			'SELECT * FROM market WHERE user_id = ? AND item_name = ?',
+			[userId, itemName],
+			(err, row) => {
+				if (err) {
+					console.error(err)
+					reject(err)
+				} else {
+					resolve(row !== undefined)
+				}
 			}
-		}
-	)
+		)
+	})
+
+	if (!itemExists)
+		return '❌ Вы не выставляли этот предмет на продажу или введите название предмета.'
+
+	return new Promise((resolve, reject) => {
+		db.run(
+			'DELETE FROM market WHERE user_id = ? AND item_name = ?',
+			[userId, itemName],
+			err => {
+				if (err) {
+					console.error(err)
+					reject('Ошибка при удалении предмета с рынка.')
+				} else {
+					resolve('✅ Предмет успешно снят с продажи!')
+				}
+			}
+		)
+	})
 }
 
 async function showMarket() {
-	return new Promise((resolve, reject) => {
-		db.all('SELECT * FROM market', [], (err, rows) => {
+	return new Promise(async (resolve, reject) => {
+		db.all('SELECT * FROM market', [], async (err, rows) => {
 			if (err) {
 				console.error(err)
-				reject('Failed to retrieve market.')
+				reject('Не удалось получить список товаров на рынке.')
 			} else {
+				// Получаем список всех пользователей для быстрого доступа к их никнеймам
+				const users = await new Promise((resolve, reject) => {
+					db.all('SELECT vk_id, nickname FROM users', [], (err, userRows) => {
+						if (err) {
+							reject(err)
+						} else {
+							const userMap = new Map(
+								userRows.map(user => [user.vk_id, user.nickname])
+							)
+							resolve(userMap)
+						}
+					})
+				})
+
 				const marketList = rows
-					.map(
-						row =>
-							`🙎‍♂ Продавец: ${row.user_id}\n💼 Предмет: ${row.item_name}, 🔖 Кол-во: ${row.quantity}\n💸 Цена: ${row.price} WCoin за штуку`
-					)
+					.map(row => {
+						const sellerNickname = users.get(row.user_id) || 'Неизвестно'
+						return `🙎‍♂ Продавец: ${sellerNickname}\n💼 Предмет: ${row.item_name}, 🔖 Кол-во: ${row.quantity}\n💸 Цена: ${row.price} WCoin за штуку`
+					})
 					.join('\n\n')
 				resolve(marketList || '🔎 Продавцы предметов не найдены.')
 			}
@@ -1418,7 +1469,8 @@ async function buyMarketItem(buyerId, sellerId, itemName) {
 			)
 		})
 
-		if (!marketItem) return '🔎 Предмет не найден на рынке.'
+		if (!marketItem)
+			return '🔎 Предмет не найден на рынке.\nВведите команду /wmarkets купить [ID/упоминание] [предмет]'
 
 		const totalPrice = marketItem.price * marketItem.quantity
 		if (buyer.wcoin < totalPrice) return '❌ Недостаточно средств для покупки.'
@@ -1500,7 +1552,7 @@ async function buyMarketItem(buyerId, sellerId, itemName) {
 			)
 		})
 
-		return '💸 Покупка успешно совершена!\nПодробнее /предметы'
+		return `💸 Покупка успешно совершена!\nСписано ${totalPrice} WCoin.\nПодробнее /предметы`
 	} catch (error) {
 		console.error(error)
 		return 'Произошла ошибка при покупке предмета.'
@@ -1554,8 +1606,9 @@ async function getClanByUserId(userId) {
 	return new Promise((resolve, reject) => {
 		db.get(
 			`
-            SELECT c.* FROM clans c
+            SELECT c.*, u.nickname AS creator_nickname FROM clans c
             JOIN clan_members cm ON c.id = cm.clan_id
+            JOIN users u ON c.creator_id = u.vk_id
             WHERE cm.user_id = ?
         `,
 			[userId],
@@ -1573,27 +1626,38 @@ async function getClanByUserId(userId) {
 
 async function createClan(userId, clanName) {
 	return new Promise((resolve, reject) => {
-		db.run(
-			'INSERT INTO clans (name, creator_id) VALUES (?, ?)',
-			[clanName, userId],
-			function (err) {
-				if (err) {
-					reject(err)
-				} else {
-					db.run(
-						'INSERT INTO clan_members (user_id, clan_id) VALUES (?, ?)',
-						[userId, this.lastID],
-						err => {
-							if (err) {
-								reject(err)
-							} else {
-								resolve(this.lastID)
-							}
-						}
+		getClanByUserId(userId)
+			.then(existingClan => {
+				if (existingClan) {
+					reject(
+						'❌ Вы уже находитесь в клане. Выйдите из него, чтобы создать новый.'
 					)
+					return
 				}
-			}
-		)
+
+				db.run(
+					'INSERT INTO clans (name, creator_id) VALUES (?, ?)',
+					[clanName, userId],
+					function (err) {
+						if (err) {
+							reject(err)
+						} else {
+							db.run(
+								'INSERT INTO clan_members (user_id, clan_id) VALUES (?, ?)',
+								[userId, this.lastID],
+								err => {
+									if (err) {
+										reject(err)
+									} else {
+										resolve(this.lastID)
+									}
+								}
+							)
+						}
+					}
+				)
+			})
+			.catch(reject)
 	})
 }
 
@@ -1655,7 +1719,7 @@ async function leaveClan(userId) {
 	})
 }
 
-async function inviteMember(creatorId, inviteeId) {
+async function inviteMember(creatorId, invitee) {
 	return new Promise((resolve, reject) => {
 		getClanByUserId(creatorId)
 			.then(clan => {
@@ -1663,17 +1727,37 @@ async function inviteMember(creatorId, inviteeId) {
 					reject('😡 Вы не являетесь создателем клана.')
 					return
 				}
-				db.run(
-					'INSERT INTO clan_members (user_id, clan_id) VALUES (?, ?)',
-					[inviteeId, clan.id],
-					err => {
-						if (err) {
-							reject(err)
-						} else {
-							resolve()
+
+				// Используем resolveUserId для получения ID пользователя
+				resolveUserId(invitee)
+					.then(userId => {
+						if (!userId) {
+							reject('❌ Пользователь не найден.')
+							return
 						}
-					}
-				)
+
+						getClanByUserId(userId)
+							.then(existingClan => {
+								if (existingClan) {
+									reject('❌ Пользователь уже находится в клане.')
+									return
+								}
+
+								db.run(
+									'INSERT INTO clan_members (user_id, clan_id) VALUES (?, ?)',
+									[userId, clan.id],
+									err => {
+										if (err) {
+											reject(err)
+										} else {
+											resolve('✅ Пользователь успешно приглашен в клан.')
+										}
+									}
+								)
+							})
+							.catch(reject)
+					})
+					.catch(reject)
 			})
 			.catch(reject)
 	})
@@ -1840,7 +1924,31 @@ async function withdrawFromClan(userId, amount) {
 	})
 }
 
-async function kickMember(creatorId, memberId) {
+async function listClanMembers(clanId) {
+	return new Promise((resolve, reject) => {
+		db.all(
+			'SELECT u.vk_id, u.nickname FROM users u JOIN clan_members cm ON u.vk_id = cm.user_id WHERE cm.clan_id = ?',
+			[clanId],
+			(err, rows) => {
+				if (err) {
+					reject('Ошибка при получении списка участников.')
+				} else {
+					resolve(rows)
+				}
+			}
+		)
+	})
+}
+
+async function handleClanList(context, clanId) {
+	const members = await listClanMembers(clanId)
+	const formattedList = members
+		.map(member => `[id${member.vk_id}|${member.nickname}]`)
+		.join('\n')
+	context.send(`🛡 Участники клана:\n${formattedList}`, {disable_mentions: 1})
+}
+
+async function kickMember(creatorId, member) {
 	return new Promise((resolve, reject) => {
 		getClanByUserId(creatorId)
 			.then(clan => {
@@ -1848,17 +1956,43 @@ async function kickMember(creatorId, memberId) {
 					reject('😡 Вы не являетесь создателем клана.')
 					return
 				}
-				db.run(
-					'DELETE FROM clan_members WHERE user_id = ? AND clan_id = ?',
-					[memberId, clan.id],
-					err => {
-						if (err) {
-							reject(err)
-						} else {
-							resolve()
-						}
-					}
-				)
+
+				let memberIdPromise
+				if (isNaN(parseInt(member))) {
+					memberIdPromise = resolveUserId(member) // Используйте функцию resolveUserId для получения ID
+				} else {
+					memberIdPromise = Promise.resolve(parseInt(member))
+				}
+
+				memberIdPromise
+					.then(memberId => {
+						db.get(
+							'SELECT * FROM clan_members WHERE user_id = ? AND clan_id = ?',
+							[memberId, clan.id],
+							(err, existingMember) => {
+								if (err) {
+									reject('Ошибка при проверке участника.')
+									return
+								}
+								if (!existingMember) {
+									reject('❌ Пользователь не найден в клане.')
+								} else {
+									db.run(
+										'DELETE FROM clan_members WHERE user_id = ? AND clan_id = ?',
+										[memberId, clan.id],
+										err => {
+											if (err) {
+												reject(err)
+											} else {
+												resolve('✅ Пользователь успешно кикнут из клана.')
+											}
+										}
+									)
+								}
+							}
+						)
+					})
+					.catch(reject)
 			})
 			.catch(reject)
 	})
@@ -2033,7 +2167,7 @@ function itemDamageCalculator(itemName, enemyName) {
 		'Золотой меч': 'Темный рыцарь',
 		'Ведро воды': 'Огненный маг',
 		'Платиновая стрела': 'Красный дракон',
-		'Зелье огня': 'Ледяная Валькирия',
+		'Зелье огня': 'Ледяная валькирия',
 	}
 	return itemDamageMap[itemName] === enemyName ? 50 : 30
 }
@@ -2124,7 +2258,7 @@ vk.updates.on('message_new', async context => {
 		const clan = await getClanByUserId(userId)
 		if (clan) {
 			context.send(
-				`🛡 Название клана: ${clan.name}\n👑 Создатель: ${clan.creator_id}\n💰 Общак: ${clan.balance}\n🥳 Победы: ${clan.wins}\n🤒 Поражения: ${clan.losses}`
+				`🛡 Название клана: ${clan.name}\n👑 Создатель: ${clan.creator_nickname}\n💰 Общак: ${clan.balance}\n🥳 Победы: ${clan.wins}\n🤒 Поражения: ${clan.losses}`
 			)
 		} else {
 			context.send('❌ Вы не состоите в клане.')
@@ -2141,10 +2275,10 @@ vk.updates.on('message_new', async context => {
 		const clanName = parts.slice(2).join(' ')
 		const user = await getUser(userId)
 
-		if (user && user.wcoin >= 5000) {
+		if (user && user.wcoin >= 4000) {
 			try {
 				await createClan(userId, clanName)
-				db.run('UPDATE users SET wcoin = wcoin - 5000 WHERE vk_id = ?', [
+				db.run('UPDATE users SET wcoin = wcoin - 4000 WHERE vk_id = ?', [
 					userId,
 				])
 				context.send(`🥳 Клан ${clanName} успешно создан!`)
@@ -2164,18 +2298,7 @@ vk.updates.on('message_new', async context => {
 	} else if (message.startsWith('/wclan список')) {
 		const clan = await getClanByUserId(userId)
 		if (clan) {
-			db.all(
-				'SELECT u.nickname FROM users u JOIN clan_members cm ON u.vk_id = cm.user_id WHERE cm.clan_id = ?',
-				[clan.id],
-				(err, rows) => {
-					if (err) {
-						context.send('Ошибка при получении списка участников.')
-					} else {
-						const members = rows.map(row => row.nickname).join('\n')
-						context.send(`🛡 Участники клана:\n${members}`)
-					}
-				}
-			)
+			await handleClanList(context, clan.id)
 		} else {
 			context.send('❌ Вы не состоите в клане.')
 		}
@@ -2187,10 +2310,20 @@ vk.updates.on('message_new', async context => {
 			context.send(error)
 		}
 	} else if (message.startsWith('/wclan пригласить')) {
-		const inviteeId = parseInt(message.split(' ')[2], 10)
+		const parts = message.split(' ')
+		if (parts.length < 3) {
+			context.send(
+				'❌ Неправильная команда. Используйте /wclan пригласить <имя_пользователя>.'
+			)
+			return
+		}
+
+		const invitee = parts.slice(2).join(' ')
 		try {
-			await inviteMember(userId, inviteeId)
-			context.send(`✅ Пользователь с ID ${inviteeId} приглашен в клан.`)
+			await inviteMember(userId, invitee)
+			context.send(
+				`✅ Вы успешно пригласили пользователя в клан.`
+			)
 		} catch (error) {
 			context.send(error)
 		}
@@ -2219,10 +2352,20 @@ vk.updates.on('message_new', async context => {
 			context.send(error)
 		}
 	} else if (message.startsWith('/wclan кикнуть')) {
-		const memberId = parseInt(message.split(' ')[2], 10)
+		const parts = message.split(' ')
+		if (parts.length < 3) {
+			context.send(
+				'❌ Неправильная команда. Используйте /wclan кикнуть <имя_пользователя>.'
+			)
+			return
+		}
+
+		const member = parts.slice(2).join(' ')
 		try {
-			await kickMember(userId, memberId)
-			context.send(`✅ Пользователь с ID ${memberId} исключен из клана.`)
+			await kickMember(userId, member)
+			// Получите никнейм пользователя из бота для использования в сообщении
+			const memberNickname = await getUserNickname(userId)
+			context.send(`✅ Пользователь успешно исключен из клана.`)
 		} catch (error) {
 			context.send(error)
 		}
@@ -2290,7 +2433,7 @@ vk.updates.on('message_new', async context => {
 			`⚙ Список команд клана:\n\n` +
 				`/wclan инфо - информация о вашем клане\n` +
 				`/wclan список - список участников вашего клана\n` +
-				`/wclan создать <название> - создать новый клан 5000 WCoin\n` +
+				`/wclan создать <название> - создать новый клан 4000 WCoin\n` +
 				`/wclan пригласить <ID пользователя> - пригласить пользователя в клан\n` +
 				`/wclan удар - нанести удар врагу\n` +
 				`/wclan удар [название предмета] - нанести удар врагу специальным предметом\n` +
@@ -2318,9 +2461,7 @@ vk.updates.on('message_new', async context => {
 	} else if (message.startsWith('/wmarkets снять')) {
 		const itemName = message.split(' ').slice(2).join(' ') // Собираем всё, что после первого пробела
 		const response = await removeMarketItem(userId, itemName)
-		await context.send(
-			`${await getUserMention(userId)}, ✅ Предмет успешно снят с продажи.`
-		)
+		await context.send(`${await getUserMention(userId)}, ${response}`)
 	} else if (message.startsWith('/wmarkets рынок')) {
 		const marketList = await showMarket()
 		await context.send(marketList)
@@ -2810,7 +2951,7 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.0.7`)
+		await context.send(`1.0.8`)
 	} else if (message.startsWith('/рефералка')) {
 		await context.send(
 			`${await getUserMention(
@@ -2829,6 +2970,38 @@ vk.updates.on('message_new', async context => {
 				userId
 			)}, По миру найдено много кладов, покупай лопату и скорей за работу!\nИспользуй команду: /копать клад [название_лопаты].`
 		)
+	} else if (message.startsWith('/рассылка')) {
+		const senderId = context.senderId
+		if (senderId !== 252840773) {
+			context.send('❌ У вас нет прав на использование этой команды.')
+			return
+		}
+
+		const parts = message.split(' ')
+		if (parts.length < 2) {
+			context.send(
+				'❌ Неправильная команда. Используйте /рассылка [Текст сообщения].'
+			)
+			return
+		}
+
+		const messageText = parts.slice(1).join(' ')
+
+		try {
+			const users = await getAllRegisteredUsers()
+			for (const user of users) {
+				await vk.api.messages.send({
+					user_id: user.vk_id,
+					message: messageText,
+					random_id: Date.now(), // Используем текущее время как уникальный идентификатор
+				})
+			}
+			context.send('✅ Сообщение успешно отправлено всем пользователям.')
+		} catch (error) {
+			console.error('Ошибка при отправке сообщения:', error)
+			context.send('❌ Ошибка при отправке сообщения.')
+		}
+
 	} else if (message === '/начать путь') {
 		await context.send({
 			message:
@@ -3013,7 +3186,7 @@ vk.updates.on('message_new', async context => {
 		context.messagePayload.command === 'video'
 	) {
 		await context.send(
-			'Конечно! Держи - https://vk.com/waynes_family?z=video-199010052_456239063%2Fvideos-199010052%2Fpl_-199010052_-2\n\nСама честно любитель смотреть видосики😊'
+			'Конечно! Держи - \n\nСама честно любитель смотреть видосики😊'
 		)
 	} else if (
 		context.messagePayload &&
@@ -3095,6 +3268,15 @@ vk.updates.on('message_new', async context => {
 } 
 )
 
+async function getAllRegisteredUsers() {
+	return new Promise((resolve, reject) => {
+		db.all('SELECT vk_id FROM users', (err, rows) => {
+			if (err) reject(err)
+			else resolve(rows)
+		})
+	})
+}
+
 async function updateUserRating(vk_id, ratingIncrement) {
 	return new Promise((resolve, reject) => {
 		db.run(
@@ -3113,10 +3295,12 @@ async function updateUserRating(vk_id, ratingIncrement) {
 }
 
 async function getTopUsersByWcoin(limit) {
+	const excludedIds = [252840773, 422202607] // IDs, которые нужно исключить
+	const placeholders = excludedIds.map(() => '?').join(', ') // Создаем строку "?, ?" для запроса
 	return new Promise((resolve, reject) => {
 		db.all(
-			'SELECT vk_id, nickname, wcoin FROM users ORDER BY wcoin DESC LIMIT ?',
-			[limit],
+			`SELECT vk_id, nickname, wcoin FROM users WHERE vk_id NOT IN (${placeholders}) ORDER BY wcoin DESC LIMIT ?`,
+			[...excludedIds, limit],
 			(err, rows) => {
 				if (err) reject(err)
 				else resolve(rows)
