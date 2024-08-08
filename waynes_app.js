@@ -1432,8 +1432,11 @@ async function showMarket() {
 
 				const marketList = rows
 					.map(row => {
-						const sellerNickname = users.get(row.user_id) || 'Неизвестно'
-						return `🙎‍♂ Продавец: ${sellerNickname}\n💼 Предмет: ${row.item_name}, 🔖 Кол-во: ${row.quantity}\n💸 Цена: ${row.price} WCoin за штуку`
+						const sellerNickname = users.get(row.user_id);
+						const sellerLink = sellerNickname
+							? `[id${row.user_id}|${sellerNickname}]`
+							: 'Неизвестно'
+						return `🙎‍♂ Продавец: ${sellerLink}\n💼 Предмет: ${row.item_name}, 🔖 Кол-во: ${row.quantity}\n💸 Цена: ${row.price} WCoin за штуку`
 					})
 					.join('\n\n')
 				resolve(marketList || '🔎 Продавцы предметов не найдены.')
@@ -1552,7 +1555,7 @@ async function buyMarketItem(buyerId, sellerId, itemName) {
 			)
 		})
 
-		return `💸 Покупка успешно совершена!\nСписано ${totalPrice} WCoin.\nПодробнее /предметы`
+		return `💸 Вы успешно преобрели предмет за ${totalPrice} WCoin.\nПодробнее /предметы`
 	} catch (error) {
 		console.error(error)
 		return 'Произошла ошибка при покупке предмета.'
@@ -2464,7 +2467,7 @@ vk.updates.on('message_new', async context => {
 		await context.send(`${await getUserMention(userId)}, ${response}`)
 	} else if (message.startsWith('/wmarkets рынок')) {
 		const marketList = await showMarket()
-		await context.send(marketList)
+		await context.send(marketList, {disable_mentions: 1})
 	} else if (message.startsWith('/wmarkets купить')) {
 		const parts = message.split(' ').slice(2)
 		const sellerId = await resolveUserId(parts[0])
