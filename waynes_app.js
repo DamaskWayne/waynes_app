@@ -14,8 +14,16 @@ const twoHours = 7200 // 2 часа в секундах
 
 db.serialize(() => {
 	db.run(
-		'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, vk_id INTEGER, nickname TEXT, status TEXT, wcoin INTEGER, rating INTEGER DEFAULT 0, last_bonus_timestamp INTEGER DEFAULT 0, last_shovel_purchase_timestamp INTEGER DEFAULT 0, rewards INTEGER DEFAULT 0)'
+		'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, vk_id INTEGER, nickname TEXT, status TEXT, wcoin INTEGER, rating INTEGER DEFAULT 0, referrals_count INTEGER DEFAULT 0, last_bonus_timestamp INTEGER DEFAULT 0, last_shovel_purchase_timestamp INTEGER DEFAULT 0, rewards INTEGER DEFAULT 0)'
 	)
+
+	db.run(`
+    CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_id INTEGER,
+        referred_id INTEGER
+    )
+`)
 
 	db.run(
 		'CREATE TABLE IF NOT EXISTS promocodes (code TEXT PRIMARY KEY, wcoin INTEGER)'
@@ -60,7 +68,9 @@ db.serialize(() => {
             wins INTEGER DEFAULT 0,
             losses INTEGER DEFAULT 0,
 			health INTEGER DEFAULT 1000,
-            last_battle_timestamp INTEGER DEFAULT 0
+            last_battle_timestamp INTEGER DEFAULT 0,
+			level INTEGER DEFAULT 1,
+			required_items TEXT DEFAULT '{"level2": {"Эбонитовый меч": 2, "Эбонитовая броня": 2, "Посох Wayne": 3}, "level3": {"Эбонитовый меч": 4, "Эбонитовая броня": 4, "Посох Wayne": 5}}'
         )
     `)
 
@@ -74,16 +84,43 @@ db.serialize(() => {
 
 	db.run(`
         CREATE TABLE IF NOT EXISTS clan_battles (
-            clan_id INTEGER,
-            enemy_name TEXT,
-            enemy_health INTEGER DEFAULT 1000,
-            clan_health INTEGER DEFAULT 1000,
-            last_battle_timestamp INTEGER DEFAULT 0
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            clan_id INTEGER NOT NULL,
+            enemy_name TEXT NOT NULL,
+            enemy_health INTEGER NOT NULL,
+            clan_health INTEGER NOT NULL,
+            last_battle_timestamp INTEGER NOT NULL,
+            FOREIGN KEY (clan_id) REFERENCES clans(id)
         )
+    `)
+
+	db.run(`
+		CREATE TABLE IF NOT EXISTS crafted_items (
+			user_id INTEGER,
+			item_name TEXT,
+			quantity INTEGER DEFAULT 1,
+			PRIMARY KEY (user_id, item_name)
+		)
+	`)
+
+	db.run(`
+        CREATE TABLE IF NOT EXISTS fund (
+    		balance INTEGER DEFAULT 0
+		)
+    `)
+
+	db.run(`
+        CREATE TABLE IF NOT EXISTS fund_contributions (
+    		user_id INTEGER,
+    		amount INTEGER,
+    		FOREIGN KEY(user_id) REFERENCES users(vk_id)
+		)
     `)
 })
 
 // Item
+const craftedItemsList = ['Эбонитовый меч', 'Эбонитовая броня']
+
 const itemList = [
 	'Фрагменты WCoin',
 	'Легкая аптечка',
@@ -94,6 +131,23 @@ const itemList = [
 	'Зелье огня',
 	'Платиновая стрела',
 ]
+
+const craftingRecipes = {
+	'Эбонитовая броня': {
+		'Зелье огня': 6,
+		'Платиновая стрела': 7,
+		'Посох Wayne': 6
+	},
+	'Эбонитовый меч': {
+		'Золотой меч': 6,
+		'Ведро воды': 5,
+		'Посох Wayne': 6
+	},
+	WCoin: {
+		'Фрагменты WCoin': 25,
+		'Посох Wayne': 2,
+	},
+}
 
 // Shovels
 const shovelPrices = {
@@ -305,22 +359,34 @@ async function getUserByName(username) {
 
 async function getUser(vk_id) {
 	return new Promise((resolve, reject) => {
-		db.get('SELECT * FROM users WHERE vk_id = ?', [vk_id], (err, row) => {
-			if (err) {
-				reject(err)
-			} else {
-				// Если пользователь не найден, возвращаем null
-				if (!row) {
-					resolve(null)
+		db.get(
+			`
+            SELECT u.*, 
+                   (SELECT c.name FROM clans c
+                    JOIN clan_members cm ON c.id = cm.clan_id
+                    WHERE cm.user_id = u.vk_id
+                    LIMIT 1) AS clan_name
+            FROM users u
+            WHERE u.vk_id = ?
+            `,
+			[vk_id],
+			(err, row) => {
+				if (err) {
+					reject(err)
 				} else {
-					// Если last_shovel_purchase_timestamp отсутствует, устанавливаем его в 0
-					if (!row.last_shovel_purchase_timestamp) {
-						row.last_shovel_purchase_timestamp = 0
+					// Если пользователь не найден, возвращаем null
+					if (!row) {
+						resolve(null)
+					} else {
+						// Если last_shovel_purchase_timestamp отсутствует, устанавливаем его в 0
+						if (!row.last_shovel_purchase_timestamp) {
+							row.last_shovel_purchase_timestamp = 0
+						}
+						resolve(row)
 					}
-					resolve(row)
 				}
 			}
-		})
+		)
 	})
 }
 
@@ -674,11 +740,11 @@ async function sendCaseList(context) {
     "купить кейс [название]"
     
     Доступные кейсы и их стоимость:
-    📦 Обычный кейс: 400 WCoin
-    📦 Серебряный кейс: 900 WCoin
-    🎁 Золотой кейс: 1300 WCoin
-    🎁 Платиновый кейс: 3200 WCoin
-    💼 WayneCase: 5000 WCoin`)
+    📦 Обычный кейс: 700 WCoin
+    📦 Серебряный кейс: 3000 WCoin
+    🎁 Золотой кейс: 4000 WCoin
+    🎁 Платиновый кейс: 8000 WCoin
+    💼 WayneCase: 10000 WCoin`)
 }
 
 async function getUserCases(vk_id) {
@@ -1307,71 +1373,132 @@ async function listMarketItem(userId, itemName, quantity, price) {
 	if (!user)
 		return '📄 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.'
 
-	console.log(`Received itemName: "${itemName}"`)
-	console.log(`itemList: ${itemList}`)
-
-	// Проверьте, есть ли предмет в списке допустимых предметов
-	if (!itemList.includes(itemName))
-		return '❌ Такого предмета не существует, убедитесь, что вы правильно ввели название предмета, либо формат команды.\n/wmarkets выставить [предмет] [кол-во] [цена за шт.]'
-
-	// Проверьте, не выставлен ли предмет уже на продажу
-	const itemExists = await new Promise((resolve, reject) => {
-		db.get(
-			'SELECT * FROM market WHERE user_id = ? AND item_name = ?',
-			[userId, itemName],
-			(err, row) => {
-				if (err) {
-					console.error(err)
-					reject(err)
-				} else {
-					resolve(row !== undefined)
+	// Проверяем, является ли предмет крафченным
+	if (craftedItemsList.includes(itemName)) {
+		// Проверяем, не выставлен ли предмет уже на продажу
+		const itemExists = await new Promise((resolve, reject) => {
+			db.get(
+				'SELECT * FROM market WHERE user_id = ? AND item_name = ?',
+				[userId, itemName],
+				(err, row) => {
+					if (err) {
+						console.error(err)
+						reject(err)
+					} else {
+						resolve(row !== undefined)
+					}
 				}
-			}
-		)
-	})
+			)
+		})
 
-	if (itemExists)
-		return `❌ Товар уже выставлен, снимите его, чтобы снова выставить на продажу.\n/wmarkets снять [предмет]`
+		if (itemExists)
+			return `❌ Товар уже выставлен, снимите его, чтобы снова выставить на продажу.\n/wmarkets снять [предмет]`
 
-	// Проверьте, есть ли у пользователя достаточное количество предметов
-	const userItem = await new Promise((resolve, reject) => {
-		db.get(
-			'SELECT * FROM user_items WHERE user_id = ? AND item_name = ?',
-			[userId, itemName],
-			(err, row) => {
-				if (err) {
-					console.error(err)
-					reject(err)
-				} else {
-					resolve(row)
+		// Проверяем, есть ли у пользователя достаточное количество крафченных предметов
+		const userItem = await new Promise((resolve, reject) => {
+			db.get(
+				'SELECT * FROM crafted_items WHERE user_id = ? AND item_name = ?',
+				[userId, itemName],
+				(err, row) => {
+					if (err) {
+						console.error(err)
+						reject(err)
+					} else {
+						resolve(row)
+					}
 				}
-			}
-		)
-	})
+			)
+		})
 
-	if (!userItem)
-		return `${await getUserMention(userId)}, 😡 У вас нет такого предмета.`
-	if (userItem.quantity < quantity)
-		return `${await getUserMention(
-			userId
-		)}, 😡 У вас недостаточно кол-ва предметов для продажи.`
+		if (!userItem)
+			return `${await getUserMention(
+				userId
+			)}, 😡 У вас нет такого крафченного предмета.`
+		if (userItem.quantity < quantity)
+			return `${await getUserMention(
+				userId
+			)}, 😡 У вас недостаточно количества крафченных предметов для продажи.`
 
-	return new Promise((resolve, reject) => {
-		db.run(
-			'INSERT INTO market (user_id, item_name, quantity, price) VALUES (?, ?, ?, ?)',
-			[userId, itemName, quantity, price],
-			err => {
-				if (err) {
-					console.error(err)
-					reject('Failed to list item.')
-				} else {
-					resolve(
-						'✅ Предмет успешно выставлен на продажу.\nСписок продавцов: /wmarkets рынок'
-					)
+		return new Promise((resolve, reject) => {
+			db.run(
+				'INSERT INTO market (user_id, item_name, quantity, price) VALUES (?, ?, ?, ?)',
+				[userId, itemName, quantity, price],
+				err => {
+					if (err) {
+						console.error(err)
+						reject('Failed to list item.')
+					} else {
+						resolve(
+							'✅ Предмет успешно выставлен на продажу.\nСписок продавцов: /wmarkets рынок'
+						)
+					}
 				}
-			}
-		)
-	})
+			)
+		})
+	} else {
+		// Продажа обычных предметов
+		if (!itemList.includes(itemName))
+			return '❌ Такого предмета не существует, убедитесь, что вы правильно ввели название предмета, либо формат команды.\n/wmarkets выставить [предмет] [кол-во] [цена за шт.]'
+
+		// Проверяем, не выставлен ли предмет уже на продажу
+		const itemExists = await new Promise((resolve, reject) => {
+			db.get(
+				'SELECT * FROM market WHERE user_id = ? AND item_name = ?',
+				[userId, itemName],
+				(err, row) => {
+					if (err) {
+						console.error(err)
+						reject(err)
+					} else {
+						resolve(row !== undefined)
+					}
+				}
+			)
+		})
+
+		if (itemExists)
+			return `❌ Товар уже выставлен, снимите его, чтобы снова выставить на продажу.\n/wmarkets снять [предмет]`
+
+		// Проверяем, есть ли у пользователя достаточное количество предметов
+		const userItem = await new Promise((resolve, reject) => {
+			db.get(
+				'SELECT * FROM user_items WHERE user_id = ? AND item_name = ?',
+				[userId, itemName],
+				(err, row) => {
+					if (err) {
+						console.error(err)
+						reject(err)
+					} else {
+						resolve(row)
+					}
+				}
+			)
+		})
+
+		if (!userItem)
+			return `${await getUserMention(userId)}, 😡 У вас нет такого предмета.`
+		if (userItem.quantity < quantity)
+			return `${await getUserMention(
+				userId
+			)}, 😡 У вас недостаточно количества предметов для продажи.`
+
+		return new Promise((resolve, reject) => {
+			db.run(
+				'INSERT INTO market (user_id, item_name, quantity, price) VALUES (?, ?, ?, ?)',
+				[userId, itemName, quantity, price],
+				err => {
+					if (err) {
+						console.error(err)
+						reject('Failed to list item.')
+					} else {
+						resolve(
+							'✅ Предмет успешно выставлен на продажу.\nСписок продавцов: /wmarkets рынок'
+						)
+					}
+				}
+			)
+		})
+	}
 }
 
 async function removeMarketItem(userId, itemName) {
@@ -1472,12 +1599,16 @@ async function buyMarketItem(buyerId, sellerId, itemName) {
 			)
 		})
 
-		if (!marketItem)
+		if (!marketItem) {
 			return '🔎 Предмет не найден на рынке.\nВведите команду /wmarkets купить [ID/упоминание] [предмет]'
+		}
 
 		const totalPrice = marketItem.price * marketItem.quantity
-		if (buyer.wcoin < totalPrice) return '❌ Недостаточно средств для покупки.'
+		if (buyer.wcoin < totalPrice) {
+			return '❌ Недостаточно средств для покупки.'
+		}
 
+		// Обновляем средства покупателя и продавца
 		await new Promise((resolve, reject) => {
 			db.run(
 				'UPDATE users SET wcoin = wcoin - ? WHERE vk_id = ?',
@@ -1508,6 +1639,7 @@ async function buyMarketItem(buyerId, sellerId, itemName) {
 			)
 		})
 
+		// Удаляем предмет с рынка
 		await new Promise((resolve, reject) => {
 			db.run(
 				'DELETE FROM market WHERE user_id = ? AND item_name = ?',
@@ -1542,7 +1674,7 @@ async function buyMarketItem(buyerId, sellerId, itemName) {
 		// Обновляем предметы у продавца
 		await new Promise((resolve, reject) => {
 			db.run(
-				'UPDATE user_items SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?',
+				'UPDATE crafted_items SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?',
 				[marketItem.quantity, sellerId, itemName],
 				err => {
 					if (err) {
@@ -1555,7 +1687,7 @@ async function buyMarketItem(buyerId, sellerId, itemName) {
 			)
 		})
 
-		return `💸 Вы успешно преобрели предмет за ${totalPrice} WCoin.\nПодробнее /предметы`
+		return `💸 Вы успешно приобрели ${marketItem.quantity} ${itemName} за ${totalPrice} WCoin.\nПодробнее о ваших предметах: /предметы`
 	} catch (error) {
 		console.error(error)
 		return 'Произошла ошибка при покупке предмета.'
@@ -1570,16 +1702,13 @@ async function listUserItems(userId) {
 			(err, rows) => {
 				if (err) {
 					console.error(err)
-					reject('Failed to retrieve items.')
+					reject('Не удалось получить предметы.')
 				} else {
-					if (rows.length === 0) {
-						resolve('❌ У вас нет предметов.')
-					} else {
-						const items = rows
-							.map(row => `${row.item_name}: ${row.quantity} шт.`)
-							.join('\n')
-						resolve(`💼 Ваши предметы:\n${items}`)
-					}
+					const items = rows.reduce((acc, row) => {
+						acc[row.item_name] = row.quantity
+						return acc
+					}, {})
+					resolve(items)
 				}
 			}
 		)
@@ -1603,21 +1732,184 @@ async function updateUserItems(userId, itemName, quantity) {
 	})
 }
 
+// Craft
+
+async function handleCraftCommand(context) {
+	const message = context.text
+	const userId = context.senderId
+	const parts = message.split(' ')
+
+	if (parts[0] !== '/крафт') {
+		return
+	}
+
+	const itemName = parts.slice(1).join(' ')
+
+	if (!itemName) {
+		const recipeList = Object.keys(craftingRecipes)
+			.map(item => {
+				const recipe = craftingRecipes[item]
+				const requirements = Object.entries(recipe)
+					.map(([ingredient, quantity]) => `${quantity} ${ingredient}`)
+					.join(', ')
+				return `${item}: ${requirements}`
+			})
+			.join('\n\n')
+
+		context.send(
+			`📜 Привет, я Алекс. Я помогу тебе создать кузнечный предмет, но мне нужны ресурсы и 20 WCoin:\n\n${recipeList}\n\nИспользуй команду /крафт [Кузнечный предмет]`
+		)
+		return
+	}
+
+	if (itemName === 'WCoin') {
+		const recipeForWcoin = {
+			'Фрагменты WCoin': 25,
+			'Посох Wayne': 2,
+		}
+
+		const userItems = await listUserItems(userId)
+		const userWcoin = await getUserWcoin(userId)
+		const missingItems = {}
+		const insufficientItems = {}
+
+		for (const [ingredient, quantity] of Object.entries(recipeForWcoin)) {
+			const availableQuantity = userItems[ingredient] || 0
+			if (availableQuantity < quantity) {
+				insufficientItems[ingredient] = availableQuantity
+				missingItems[ingredient] = quantity - availableQuantity
+			}
+		}
+
+		if (Object.keys(missingItems).length > 0) {
+			const missingItemsText = Object.entries(recipeForWcoin)
+				.map(([item, qty]) => {
+					const availableQty = userItems[item] || 0
+					return `${availableQty}/${qty} ${item}`
+				})
+				.join(', ')
+			context.send(
+				`❌ Недостаточно ресурсов для крафта WCoin: ${missingItemsText}`
+			)
+			return
+		}
+
+		// Deduct resources for WCoin crafting
+		for (const [ingredient, quantity] of Object.entries(recipeForWcoin)) {
+			await updateUserItems(userId, ingredient, -quantity)
+		}
+
+		// Add 50 WCoin to the user's balance
+		await updateUserWcoin(userId, 50)
+		context.send(`✅ Вы получили 50 WCoin!`)
+		return
+	}
+
+	if (!craftingRecipes[itemName]) {
+		context.send('❌ Предмет не найден в рецептах крафта.')
+		return
+	}
+
+	const recipe = craftingRecipes[itemName]
+	const userItems = await listUserItems(userId)
+	const userWcoin = await getUserWcoin(userId)
+	const missingItems = {}
+	const insufficientItems = {}
+
+	for (const [ingredient, quantity] of Object.entries(recipe)) {
+		const availableQuantity = userItems[ingredient] || 0
+		if (availableQuantity < quantity) {
+			insufficientItems[ingredient] = availableQuantity
+			missingItems[ingredient] = quantity - availableQuantity
+		}
+	}
+
+	if (userWcoin < 20) {
+		context.send('❌ Недостаточно WCoin для крафта.')
+		return
+	}
+
+	if (Object.keys(missingItems).length > 0) {
+		const missingItemsText = Object.entries(recipe)
+			.map(([item, qty]) => {
+				const availableQty = userItems[item] || 0
+				return `${availableQty}/${qty} ${item}`
+			})
+			.join(', ')
+		context.send(`❌ Недостаточно ресурсов: ${missingItemsText}`)
+		return
+	}
+
+	// Deduct WCoin
+	await updateUserWcoin(userId, -20)
+
+	// Deduct resources and add crafted item
+	for (const [ingredient, quantity] of Object.entries(recipe)) {
+		await updateUserItems(userId, ingredient, -quantity)
+	}
+
+	await updateUserItems(userId, itemName, 1)
+
+	// Add crafted item to the database
+	await addCraftedItemToDatabase(userId, itemName)
+
+	context.send(`⚒✅ Отлично, держи свой предмет ${itemName}!`)
+}
+
+async function listCraftedItems(userId) {
+	return new Promise((resolve, reject) => {
+		db.all(
+			'SELECT item_name, quantity FROM crafted_items WHERE user_id = ?',
+			[userId],
+			(err, rows) => {
+				if (err) {
+					console.error(err);
+					reject('Failed to retrieve crafted items.');
+				} else {
+					const items = rows.length
+						? rows.map(row => `${row.item_name}: ${row.quantity} шт.`).join('\n')
+						: '❌ У вас нет кузнечных предметов.';
+					resolve(`⚒ Кузнечные предметы:\n${items}`);
+				}
+			}
+		);
+	});
+}
+
+async function addCraftedItemToDatabase(userId, itemName) {
+	return new Promise((resolve, reject) => {
+		db.run(
+			'INSERT INTO crafted_items (user_id, item_name, quantity) VALUES (?, ?, ?) ON CONFLICT(user_id, item_name) DO UPDATE SET quantity = quantity + ?',
+			[userId, itemName, 1, 1],
+			err => {
+				if (err) {
+					console.error(err)
+					reject('Не удалось добавить скрафченный предмет.')
+				} else {
+					resolve()
+				}
+			}
+		)
+	})
+}
+
 // wclan
 
 async function getClanByUserId(userId) {
 	return new Promise((resolve, reject) => {
 		db.get(
 			`
-            SELECT c.*, u.nickname AS creator_nickname FROM clans c
+            SELECT c.*, u.nickname AS creator_nickname,
+                   (SELECT COUNT(*) FROM clan_members cm WHERE cm.clan_id = c.id) AS member_count
+            FROM clans c
             JOIN clan_members cm ON c.id = cm.clan_id
             JOIN users u ON c.creator_id = u.vk_id
             WHERE cm.user_id = ?
-        `,
+            `,
 			[userId],
 			(err, row) => {
 				if (err) {
-					console.error(err) // Логирование ошибки
+					console.error('Ошибка при получении данных о клане:', err)
 					reject('Ошибка при получении данных о клане.')
 				} else {
 					resolve(row)
@@ -1897,29 +2189,33 @@ async function withdrawFromClan(userId, amount) {
 					reject('😡 Вы не являетесь создателем клана.')
 					return
 				}
-				if (clan.balance < amount) {
-					reject('😡 Недостаточно средств в общаке.')
-					return
-				}
-				db.run(
-					'UPDATE clans SET balance = balance - ? WHERE id = ?',
-					[amount, clan.id],
-					err => {
+				db.get(
+					'SELECT * FROM clan_battles WHERE clan_id = ?',
+					[clan.id],
+					(err, battle) => {
 						if (err) {
-							reject(err)
-						} else {
-							db.run(
-								'UPDATE users SET wcoin = wcoin + ? WHERE vk_id = ?',
-								[amount, userId],
-								err => {
-									if (err) {
-										reject(err)
-									} else {
-										resolve()
-									}
-								}
-							)
+							reject('Ошибка при проверке битвы.')
+							return
 						}
+						if (battle) {
+							reject('😡 Нельзя снимать WCoin во время активной битвы.')
+							return
+						}
+						if (clan.balance < amount) {
+							reject('😡 Недостаточно средств в общаке.')
+							return
+						}
+						db.run(
+							'UPDATE clans SET balance = balance - ? WHERE id = ?',
+							[amount, clan.id],
+							err => {
+								if (err) {
+									reject(err)
+								} else {
+									resolve()
+								}
+							}
+						)
 					}
 				)
 			})
@@ -2249,7 +2545,201 @@ async function claimReward(userId) {
 	})
 }
 
+//Wclan улучшения
+
+async function upgradeClan(userId) {
+	return new Promise((resolve, reject) => {
+		getClanByUserId(userId)
+			.then(async clan => {
+				if (!clan || clan.creator_id !== userId) {
+					reject('😡 Вы не являетесь создателем клана.')
+					return
+				}
+
+				const itemsRequired = JSON.parse(clan.required_items)
+				const currentLevel = clan.level
+				let upgradeCost, nextLevelItems
+
+				if (currentLevel === 1) {
+					nextLevelItems = itemsRequired.level2
+					upgradeCost = 4000
+				} else if (currentLevel === 2) {
+					nextLevelItems = itemsRequired.level3
+					upgradeCost = 7000
+				} else {
+					reject('🔝 Ваш клан уже достиг максимального уровня.')
+					return
+				}
+
+				// Проверяем наличие предметов у пользователя
+				const userItems = await listUserItems(userId)
+
+				console.log('Предметы пользователя:', userItems) // Для отладки
+				console.log('Необходимые предметы для улучшения:', nextLevelItems) // Для отладки
+
+				const hasAllItems = Object.keys(nextLevelItems).every(item => {
+					const requiredQuantity = nextLevelItems[item]
+					const userQuantity = userItems[item] || 0
+					return userQuantity >= requiredQuantity
+				})
+
+				if (!hasAllItems) {
+					reject(
+						`❌ Не хватает предметов для улучшения.\nДля 2-го уровня необходимо:\n${itemsRequired.level2['Эбонитовый меч']}шт. Эбонитовый меч\n${itemsRequired.level2['Эбонитовая броня']}шт. Эбонитовая броня\n${itemsRequired.level2['Посох Wayne']}шт. Посох Wayne\n4000 WCoin\n\nДля 3-го уровня необходимо:\n${itemsRequired.level3['Эбонитовый меч']}шт. Эбонитовый меч\n${itemsRequired.level3['Эбонитовая броня']}шт. Эбонитовая броня\n${itemsRequired.level3['Посох Wayne']}шт. Посох Wayne\n7000 WCoin`
+					)
+					return
+				}
+
+				// Проверяем баланс клана
+				if (clan.balance < upgradeCost) {
+					reject(
+						'😡 Недостаточно средств в общаке для улучшения.\nДля 2-го уровня необходимо: 4000 WCoin\nДля 3-го уровня необходимо: 7000 WCoin\n'
+					)
+					return
+				}
+
+				// Списываем предметы и средства
+				db.run(
+					'UPDATE clans SET balance = balance - ?, level = level + 1 WHERE id = ?',
+					[upgradeCost, clan.id],
+					err => {
+						if (err) {
+							reject('Ошибка при улучшении клана.')
+							return
+						}
+
+						// Списываем предметы
+						const itemUpdates = Object.keys(nextLevelItems).map(item => {
+							return new Promise((itemResolve, itemReject) => {
+								db.run(
+									'UPDATE user_items SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?',
+									[nextLevelItems[item], userId, item],
+									err => {
+										if (err) {
+											itemReject('Ошибка при списании предметов.')
+										} else {
+											itemResolve()
+										}
+									}
+								)
+							})
+						})
+
+						Promise.all(itemUpdates)
+							.then(() => {
+								resolve(
+									'✅ Клан успешно улучшен до уровня ' +
+										(currentLevel + 1) +
+										'!'
+								)
+							})
+							.catch(reject)
+					}
+				)
+			})
+			.catch(reject)
+	})
+}
+
+// fund
+
+async function depositToFund(userId, amount) {
+	try {
+		// Проверяем, достаточно ли WCoin у пользователя
+		const userWcoin = await getUserWcoin(userId)
+		if (userWcoin < amount) {
+			return 'Недостаточно WCoin для пополнения фонда.'
+		}
+
+		// Обновляем WCoin пользователя
+		await updateUserWcoin(userId, -amount)
+
+		// Получаем текущий баланс фонда
+		const fund = await new Promise((resolve, reject) => {
+			db.get('SELECT balance FROM fund', (err, row) => {
+				if (err) reject(err)
+				else resolve(row ? row.balance : null)
+			})
+		})
+
+		// Если фонда нет, создаем запись с балансом 0
+		if (fund === null) {
+			await new Promise((resolve, reject) => {
+				db.run('INSERT INTO fund (balance) VALUES (0)', function (err) {
+					if (err) reject(err)
+					else resolve()
+				})
+			})
+		}
+
+		// Обновляем фонд
+		await new Promise((resolve, reject) => {
+			db.run('UPDATE fund SET balance = balance + ?', [amount], function (err) {
+				if (err) reject(err)
+				else resolve()
+			})
+		})
+
+		// Обновляем таблицу для отслеживания пополнений
+		await new Promise((resolve, reject) => {
+			db.run(
+				'INSERT INTO fund_contributions (user_id, amount) VALUES (?, ?)',
+				[userId, amount],
+				function (err) {
+					if (err) reject(err)
+					else resolve()
+				}
+			)
+		})
+
+		return `Вы успешно пополнили фонд на ${amount} WCoin.`
+	} catch (error) {
+		console.error('Ошибка при пополнении фонда:', error)
+		return 'Произошла ошибка при пополнении фонда.'
+	}
+}
+
+async function showFund(context) {
+	try {
+		// Получаем текущий баланс фонда
+		const fundBalance = await new Promise((resolve, reject) => {
+			db.get('SELECT balance FROM fund', (err, row) => {
+				if (err) reject(err)
+				else resolve(row ? row.balance : 0)
+			})
+		})
+
+		// Получаем топ 10 пользователей, пополнивших фонд
+		const topContributors = await new Promise((resolve, reject) => {
+			db.all(
+				'SELECT user_id, SUM(amount) as total_amount FROM fund_contributions GROUP BY user_id ORDER BY total_amount DESC LIMIT 10',
+				(err, rows) => {
+					if (err) reject(err)
+					else resolve(rows)
+				}
+			)
+		})
+
+		let response = `💰 Баланс фонда: ${fundBalance} WCoin\n\nХочешь быть в топе? Пиши /фонд пополнить [сумма]\n\nТоп 10 пользователей, пополнивших фонд:\n`
+
+		for (const contributor of topContributors) {
+			const user = await getUser(contributor.user_id)
+			const nickname = user ? user.nickname : 'Неизвестно'
+			// Используем текстовые ссылки без упоминаний
+			response += `• [id${contributor.user_id}|${nickname}] - ${contributor.total_amount} WCoin\n`
+		}
+
+		context.send(response, { disable_mention: true })
+	} catch (error) {
+		console.error('Ошибка при отображении фонда:', error)
+		context.send('Произошла ошибка при отображении фонда.', {
+			disable_mention: true,
+		})
+	}
+}
+
 let currentQuest = null
+const lastAttackTime = {}
 
 vk.updates.on('message_new', async context => {
 	const message = context.text
@@ -2257,11 +2747,29 @@ vk.updates.on('message_new', async context => {
 	await updateUserRating(userId, 1)
 	await updateUserWcoin(userId, 1)
 
+	if (message.startsWith('/фонд пополнить')) {
+		const amount = parseInt(message.split(' ')[2], 10)
+		if (isNaN(amount) || amount <= 0) {
+			return context.send('Укажите корректную сумму для пополнения.')
+		}
+		const response = await depositToFund(userId, amount)
+		return context.send(response, { disable_mention: true })
+	}
+
+	// Обработка команды отображения фонда
+	if (message.startsWith('/фонд')) {
+		return showFund(context)
+	}
+
 	if (message.startsWith('/wclan инфо')) {
 		const clan = await getClanByUserId(userId)
 		if (clan) {
+			let enemyHealth = 1000
+			if (clan.level === 2) enemyHealth = 1300
+			else if (clan.level === 3) enemyHealth = 1600
+
 			context.send(
-				`🛡 Название клана: ${clan.name}\n👑 Создатель: ${clan.creator_nickname}\n💰 Общак: ${clan.balance}\n🥳 Победы: ${clan.wins}\n🤒 Поражения: ${clan.losses}`
+				`🛡 Название клана: ${clan.name}\n👑 Создатель: ${clan.creator_nickname}\n💰 Общак: ${clan.balance}\n🥳 Победы: ${clan.wins}\n🤒 Поражения: ${clan.losses}\n👥 Участники: ${clan.member_count}\n⭐ Уровень: ${clan.level}`
 			)
 		} else {
 			context.send('❌ Вы не состоите в клане.')
@@ -2290,6 +2798,14 @@ vk.updates.on('message_new', async context => {
 			}
 		} else {
 			context.send('❌ Недостаточно WCoin для создания клана.')
+		}
+	} else if (message.startsWith('/wclan улучшить')) {
+		try {
+			const response = await upgradeClan(userId)
+			context.send(response)
+		} catch (error) {
+			console.error('Ошибка при обработке команды /wclan улучшить:', error) // Логируем ошибку
+			context.send(error)
 		}
 	} else if (message.startsWith('/wclan удалить')) {
 		try {
@@ -2324,9 +2840,7 @@ vk.updates.on('message_new', async context => {
 		const invitee = parts.slice(2).join(' ')
 		try {
 			await inviteMember(userId, invitee)
-			context.send(
-				`✅ Вы успешно пригласили пользователя в клан.`
-			)
+			context.send(`✅ Вы успешно пригласили пользователя в клан.`)
 		} catch (error) {
 			context.send(error)
 		}
@@ -2347,12 +2861,19 @@ vk.updates.on('message_new', async context => {
 			context.send(error)
 		}
 	} else if (message.startsWith('/wclan снять')) {
-		const amount = parseInt(message.split(' ')[2], 10)
+		const parts = message.split(' ')
+		const amount = parseInt(parts[2], 10)
+
+		if (isNaN(amount) || amount <= 0) {
+			context.send('❌ Введите корректную сумму для снятия.')
+			return
+		}
+
 		try {
 			await withdrawFromClan(userId, amount)
-			context.send(`📤 Вы сняли ${amount} WCoin с общака клана.`)
+			context.send(`✅ Снято ${amount} WCoin из общака клана.`)
 		} catch (error) {
-			context.send(error)
+			context.send(`Ошибка: ${error}`)
 		}
 	} else if (message.startsWith('/wclan кикнуть')) {
 		const parts = message.split(' ')
@@ -2375,6 +2896,15 @@ vk.updates.on('message_new', async context => {
 	} else if (message.startsWith('/wclan удар')) {
 		const parts = message.split(' ')
 		const itemName = parts.length > 2 ? parts.slice(2).join(' ') : null
+
+		// Проверяем интервал времени
+		const now = Date.now()
+		if (lastAttackTime[userId] && now - lastAttackTime[userId] < 2000) {
+			context.send('❌ Вы не можете атаковать чаще, чем раз в секунду.')
+			return
+		}
+		lastAttackTime[userId] = now
+
 		try {
 			const {
 				damage,
@@ -2423,6 +2953,79 @@ vk.updates.on('message_new', async context => {
 				context.send(error)
 			}
 		}
+	} else if (message.startsWith('/wclan изменить')) {
+		const parts = message.split(' ')
+		if (parts.length < 3) {
+			context.send(
+				'❌ Неправильная команда. Используйте /wclan изменить <новое название>.'
+			)
+			return
+		}
+
+		const newName = parts.slice(2).join(' ')
+		const clan = await getClanByUserId(userId)
+
+		if (clan) {
+			if (clan.creator_id !== userId) {
+				context.send('❌ Только создатель клана может изменить его название.')
+				return
+			}
+
+			if (clan.balance < 200) {
+				context.send(
+					'❌ Недостаточно средств в общаке для изменения названия клана.'
+				)
+				return
+			}
+
+			try {
+				await new Promise((resolve, reject) => {
+					db.run(
+						'UPDATE clans SET name = ?, balance = balance - 200 WHERE id = ?',
+						[newName, clan.id],
+						err => {
+							if (err) {
+								reject(err)
+							} else {
+								resolve()
+							}
+						}
+					)
+				})
+				context.send(`✅ Название клана изменено на ${newName}.`)
+			} catch (error) {
+				context.send('Ошибка при изменении названия клана.')
+			}
+		} else {
+			context.send('❌ Вы не состоите в клане.')
+		}
+	} else if (message.startsWith('/wclan кланы')) {
+		db.all(
+			`
+        SELECT c.id, c.name, u.nickname AS creator_nickname, 
+               (SELECT COUNT(*) FROM clan_members cm WHERE cm.clan_id = c.id) AS member_count,
+               c.level, c.wins, c.losses
+        FROM clans c
+        JOIN users u ON c.creator_id = u.vk_id
+        `,
+			(err, rows) => {
+				if (err) {
+					context.send('Ошибка при получении списка кланов.')
+					return
+				}
+
+				if (rows.length === 0) {
+					context.send('❌ Кланы не найдены.')
+					return
+				}
+
+				let response = '📜 Список кланов:\n'
+				rows.forEach(clan => {
+					response += `\n🛡 Название: ${clan.name}\n👑 Создатель: ${clan.creator_nickname}\n👥 Участников: ${clan.member_count}\n⭐ Уровень: ${clan.level}\n🥳 Победы: ${clan.wins}\n🤒 Поражения: ${clan.losses}\n`
+				})
+				context.send(response)
+			}
+		)
 	} else if (message.startsWith('/wclan враги')) {
 		context.send(
 			`👺 Враги, с которыми вы будете сражаться и получать большой куш. Ваша поддержка нужна жителям!\n\n` +
@@ -2443,11 +3046,15 @@ vk.updates.on('message_new', async context => {
 				`/wclan покинуть - выйти из клана\n` +
 				`/wclan снять <сумма> - снять средства из общака клана (только создатель)\n` +
 				`/wclan кикнуть <ID пользователя> - исключить пользователя из клана (только создатель)\n` +
+				`/wclan изменить [название клана] - изменить название клана на новое 200 WCoin\n` +
 				`/wclan удалить - удалить клан (только создатель)\n` +
 				`/wclan поиск врага - начать поиск врага (только создатель)\n` +
 				`/wclan лечить <тип аптечки> - вылечить клан\n` +
-				`/wclan враги - информация о врагах и их слабостей`
+				`/wclan враги - информация о врагах и их слабостей\n` +
+				`/wclan кланы - список созданных кланов`
 		)
+	} else if (message.startsWith('/крафт')) {
+		await handleCraftCommand(context)
 	}
 
 	if (message.startsWith('/wmarkets выставить')) {
@@ -2476,8 +3083,19 @@ vk.updates.on('message_new', async context => {
 		const response = await buyMarketItem(userId, sellerId, itemName)
 		await context.send(`${await getUserMention(userId)}, ${response}`)
 	} else if (message.startsWith('/предметы')) {
-		const itemsList = await listUserItems(userId)
-		await context.send(`${await getUserMention(userId)}, ${itemsList}`)
+		const userItems = await listUserItems(userId)
+		const craftedItems = await listCraftedItems(userId)
+
+		// Преобразуем объект userItems в строку
+		const userItemsMessage = Object.entries(userItems)
+			.map(([item, quantity]) => `${item}: ${quantity} шт.`)
+			.join('\n')
+
+		await context.send(
+			`${await getUserMention(
+				userId
+			)}, 💼 Ваши предметы:\n${userItemsMessage}\n\n${craftedItems}`
+		)
 	} else if (message.startsWith('/wmarkets')) {
 		await context.send(
 			`${await getUserMention(
@@ -2717,12 +3335,16 @@ vk.updates.on('message_new', async context => {
 		const user = await getUser(userId)
 
 		if (user) {
+			console.log(`Получен профиль для ${userId}: ${user.referrals_count}`)
+			const clanInfo = user.clan_name
+				? `🏹 Клан: ${user.clan_name}`
+				: '🏹 Клан: Не состоит'
 			await context.send(
 				`${await getUserMention(userId)}, Ваш профиль:\n🗿ID: ${
 					user.vk_id
 				}\n💎Ник: ${user.nickname}\n💸WCoin: ${user.wcoin}\n👑Рейтинг: ${
 					user.rating
-				}`
+				}\n${clanInfo}\n🎁 Пригласил: ${user.referrals_count} чел.`
 			)
 		} else {
 			await context.send(
@@ -2861,15 +3483,15 @@ vk.updates.on('message_new', async context => {
 	if (message === '/купить кейс') {
 		await sendCaseList(context)
 	} else if (message === '/купить кейс обычный') {
-		await handleBuyCaseCommand(context, 'common', 400)
+		await handleBuyCaseCommand(context, 'common', 700)
 	} else if (message === '/купить кейс серебряный') {
-		await handleBuyCaseCommand(context, 'silver', 900)
+		await handleBuyCaseCommand(context, 'silver', 2000)
 	} else if (message === '/купить кейс золотой') {
-		await handleBuyCaseCommand(context, 'gold', 1300)
+		await handleBuyCaseCommand(context, 'gold', 4000)
 	} else if (message === '/купить кейс платиновый') {
-		await handleBuyCaseCommand(context, 'platinum', 3200)
+		await handleBuyCaseCommand(context, 'platinum', 8000)
 	} else if (message === '/купить кейс waynecase') {
-		await handleBuyCaseCommand(context, 'wayne', 5000)
+		await handleBuyCaseCommand(context, 'wayne', 10000)
 	} else if (message === '/кейсы') {
 		const userCases = await getUserCases(userId)
 
@@ -2933,7 +3555,13 @@ vk.updates.on('message_new', async context => {
 		await context.send(
 			`${await getUserMention(
 				userId
-			)}, ⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка".\n\n🏪WShop:\n🛍"Рынок[wmarkets]"\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🛡"Клан[wclan]"\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n🔥"событие"\n\n🛠Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"`
+			)}, ⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка"\n"ref".\n\n🏪WShop:\n🛍"Рынок[wmarkets]"\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🛡"Клан[wclan]"\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n🔥"событие"\n👉"тапалка"\n🏦"фонд"\n\n🛠Прочее:\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"\n🥇"vip"`
+		)
+	} else if (message.startsWith('/награды кейсов')) {
+		await context.send(
+			`${await getUserMention(
+				userId
+			)}, В разработке.`
 		)
 	} else if (message.startsWith('/правила')) {
 		await context.send(
@@ -2954,13 +3582,66 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.0.8`)
-	} else if (message.startsWith('/рефералка')) {
+		await context.send(`1.0.9`)
+	} else if (message.startsWith('/кейсы награды')) {
+		await context.send(`В разработке.`)
+	} else if (message.startsWith('/vip')) {
 		await context.send(
 			`${await getUserMention(
 				userId
-			)}, Зовите своих друзей играть в нашего бота, открывать кейсы, развлекаться с новыми друзьями и зарабатывать WCoin!\n\nЗа приглашение, мы вам даем 400WCoin, а вашему другу 200WCoin!\n\nОтпишите нам в официальную группу -- [https://vk.com/waynes_family|Waynes Family ONLINE RP] и сообщите, что именно вы его пригласили.`
+			)}, Ваш кошелек: 0\n\nСписок покупок:\nTelegram Premium: ???\nЯндекс Плюс: ???\nВК Boom: ???\nЗвездочки Telegram: ???\nСтикеры ВК: ???\n...\n\nВ разработке.\n\nПокупки: В разработке`
 		)
+	} else if (message.startsWith('/isref')) {
+		const parts = message.split(' ')
+		const target = parts[1]
+		const increment = parseInt(parts[2], 10)
+
+		if (userId !== 252840773) {
+			context.send('❌ Вы не имеете права использовать эту команду.')
+			return
+		}
+
+		if (isNaN(increment) || increment <= 0) {
+			context.send(
+				'❌ Введите корректное количество приглашенных пользователей.'
+			)
+			return
+		}
+
+		const referredUserId = await resolveUserId(target)
+		if (!referredUserId) {
+			context.send('❌ Не удалось разрешить идентификатор пользователя.')
+			return
+		}
+
+		db.run(
+			'UPDATE users SET referrals_count = referrals_count + ? WHERE vk_id = ?',
+			[increment, referredUserId],
+			err => {
+				if (err) {
+					console.error('Ошибка при добавлении реферала:', err)
+					context.send('❌ Ошибка при добавлении реферала.')
+				} else {
+					context.send(`✅ Пользователю ${target} добавлено ${increment} чел.`)
+				}
+			}
+		)
+	} else if (message.startsWith('/рефералка') || message.startsWith('/ref')) {
+		const user = await getUser(userId)
+
+		if (user) {
+			await context.send(
+				`${await getUserMention(userId)}, Вы пригласили ${
+					user.referrals_count
+				} чел. 🎁\n\nЗовите своих друзей играть в нашего бота, открывать кейсы, развлекаться с новыми друзьями и зарабатывать WCoin!\nОбменивай WCoin проще на VIP разделе\n\nЗа приглашение, мы вам даем 800WCoin, а вашему другу 600WCoin!\n\nОтпишите нам в официальную группу -- [https://vk.com/waynes_family|Waynes Family ONLINE RP] и сообщите, что именно вы его пригласили.`
+			)
+		} else {
+			await context.send(
+				`${await getUserMention(
+					userId
+				)}, 🗿 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
+			)
+		}
 	} else if (message.startsWith('/мерч')) {
 		await context.send(
 			`${await getUserMention(
@@ -3004,7 +3685,6 @@ vk.updates.on('message_new', async context => {
 			console.error('Ошибка при отправке сообщения:', error)
 			context.send('❌ Ошибка при отправке сообщения.')
 		}
-
 	} else if (message === '/начать путь') {
 		await context.send({
 			message:
