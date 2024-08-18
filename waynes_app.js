@@ -2212,7 +2212,10 @@ async function withdrawFromClan(userId, amount) {
 								if (err) {
 									reject(err)
 								} else {
-									resolve()
+									// Обновляем баланс создателя клана
+									updateUserWcoin(userId, amount)
+										.then(() => resolve())
+										.catch(reject)
 								}
 							}
 						)
@@ -2701,7 +2704,6 @@ async function depositToFund(userId, amount) {
 
 async function showFund(context) {
 	try {
-		// Получаем текущий баланс фонда
 		const fundBalance = await new Promise((resolve, reject) => {
 			db.get('SELECT balance FROM fund', (err, row) => {
 				if (err) reject(err)
@@ -2709,7 +2711,6 @@ async function showFund(context) {
 			})
 		})
 
-		// Получаем топ 10 пользователей, пополнивших фонд
 		const topContributors = await new Promise((resolve, reject) => {
 			db.all(
 				'SELECT user_id, SUM(amount) as total_amount FROM fund_contributions GROUP BY user_id ORDER BY total_amount DESC LIMIT 10',
@@ -2725,15 +2726,14 @@ async function showFund(context) {
 		for (const contributor of topContributors) {
 			const user = await getUser(contributor.user_id)
 			const nickname = user ? user.nickname : 'Неизвестно'
-			// Используем текстовые ссылки без упоминаний
 			response += `• [id${contributor.user_id}|${nickname}] - ${contributor.total_amount} WCoin\n`
 		}
 
-		context.send(response, { disable_mention: true })
+		context.send(response, { disable_mentions: 1 }) // Правильное использование disable_mentions
 	} catch (error) {
 		console.error('Ошибка при отображении фонда:', error)
 		context.send('Произошла ошибка при отображении фонда.', {
-			disable_mention: true,
+			disable_mentions: 1,
 		})
 	}
 }
@@ -3582,7 +3582,7 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.0.9`)
+		await context.send(`1.1.0`)
 	} else if (message.startsWith('/кейсы награды')) {
 		await context.send(`В разработке.`)
 	} else if (message.startsWith('/vip')) {
@@ -3869,7 +3869,7 @@ vk.updates.on('message_new', async context => {
 		context.messagePayload.command === 'video'
 	) {
 		await context.send(
-			'Конечно! Держи - \n\nСама честно любитель смотреть видосики😊'
+			'Конечно! Держи - https://vk.com/video-199010052_456239063?list=bff676fbfb33815ff9\n\nСама честно любитель смотреть видосики😊'
 		)
 	} else if (
 		context.messagePayload &&
