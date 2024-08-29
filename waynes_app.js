@@ -3463,7 +3463,7 @@ vk.updates.on('message_new', async context => {
 		} catch (error) {
 			context.send(error)
 		}
-	} else if (message.startsWith('/wclan поиск врага')) {
+	} else if (message.startsWith('/wclan poisk vraga565656')) {
 		try {
 			const enemyName = await startBattle(userId)
 			context.send(`⚔ Вы нашли врага: ${enemyName}!\nИспользуйте /wclan удар [название предмета] или /wclan удар.\n/wclan лечить [Легкая аптечка или Большая аптечка]`)
