@@ -164,7 +164,52 @@ db.serialize(() => {
     		FOREIGN KEY(user_id) REFERENCES users(vk_id)
 		)
     `)
+
+	db.run(`
+        CREATE TABLE IF NOT EXISTS user_tasks (
+    		vk_id INTEGER,
+    		task_id INTEGER,
+    		completed BOOLEAN DEFAULT 0,
+    		PRIMARY KEY (vk_id, task_id)
+		);
+	`)
+
+	db.run(`
+		CREATE TABLE IF NOT EXISTS quests (
+    		id INTEGER PRIMARY KEY,
+    		text TEXT,
+    		reward INTEGER
+  		);
+    `)
 })
+
+// Games
+
+// Number
+
+// Хранение состояний игры
+let gameState = {
+    isGameActive: false,  // идет ли игра
+    currentPlayer: null,  // id текущего игрока
+    players: [],          // список участников игры
+    secretNumber: null,   // загаданное число
+    gameCreator: null,    // id создателя игры
+    minRange: 0,          // минимальное число
+    maxRange: 300         // максимальное число
+};
+
+// Сброс состояния игры
+function resetGameState() {
+    gameState = {
+        isGameActive: false,
+        currentPlayer: null,
+        players: [],
+        secretNumber: null,
+        gameCreator: null,
+        minRange: 0,
+        maxRange: 300
+    };
+}
 
 // Item
 const craftedItemsList = ['Эбонитовый меч', 'Эбонитовая броня']
@@ -237,53 +282,87 @@ function getShovelType(command) {
 // Cases
 const caseRewards = {
 	common: {
-		wcoin: [150, 200, 250],
-		items: [
-			'40.000$',
-			'50.000$',
-			'60.000$',
-			'Гитара на спину',
-			'Бананка "Supreme"',
+		rewards: [
+			{ type: 'wcoin', amount: 150, dropChance: 0.8 },
+			{ type: 'wcoin', amount: 200, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 250, dropChance: 0.7 },
+			{ type: 'item', name: '40.000$', dropChance: 0.8 },
+			{ type: 'item', name: '50.000$', dropChance: 0.6 },
+			{ type: 'item', name: '60.000$', dropChance: 0.2 },
+			{ type: 'item', name: 'Гитара на спину', dropChance: 0.2 },
+			{ type: 'item', name: 'Бананка "Supreme"', dropChance: 0.2 },
 		],
 	},
 	silver: {
-		wcoin: [450, 550, 700],
-		items: [
-			'60.000$',
-			'80.000$',
-			'110.000$',
-			'Щелкунчик на спину',
-			'Крест на спину',
+		rewards: [
+			{ type: 'wcoin', amount: 450, dropChance: 0.8 },
+			{ type: 'wcoin', amount: 550, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 700, dropChance: 0.7 },
+			{ type: 'item', name: '60.000$', dropChance: 0.8 },
+			{ type: 'item', name: '80.000$', dropChance: 0.4 },
+			{ type: 'item', name: '110.000$', dropChance: 0.2 },
+			{ type: 'item', name: 'Щелкунчик на спину', dropChance: 0.05 },
+			{ type: 'item', name: 'Крест на спину', dropChance: 0.05 },
 		],
 	},
 	gold: {
-		wcoin: [450, 500, 750, 800],
-		items: [
-			'130.000$',
-			'150.000$',
-			'190.000$',
-			'Мишка на спину',
-			'Конфета на спину',
-			'Подарок на спину',
+		rewards: [
+			{ type: 'wcoin', amount: 450, dropChance: 0.8 },
+			{ type: 'wcoin', amount: 500, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 750, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 800, dropChance: 0.7 },
+			{ type: 'item', name: '130.000$', dropChance: 0.4 },
+			{ type: 'item', name: '150.000$', dropChance: 0.3 },
+			{ type: 'item', name: '190.000$', dropChance: 0.2 },
+			{ type: 'item', name: 'Мишка на спину', dropChance: 0.05 },
+			{ type: 'item', name: 'Конфета на спину', dropChance: 0.05 },
+			{ type: 'item', name: 'Подарок на спину', dropChance: 0.05 },
 		],
 	},
 	platinum: {
-		wcoin: [1700, 1900, 2200],
-		items: [
-			'200.000$',
-			'300.000$',
-			'400.000$',
-			'Фредди',
-			'Айсмен',
-			'Арабский Шейх',
-			'Бустер',
+		rewards: [
+			{ type: 'wcoin', amount: 1700, dropChance: 0.8 },
+			{ type: 'wcoin', amount: 1900, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 2200, dropChance: 0.7 },
+			{ type: 'item', name: '200.000$', dropChance: 0.4 },
+			{ type: 'item', name: '300.000$', dropChance: 0.3 },
+			{ type: 'item', name: '400.000$', dropChance: 0.2 },
+			{ type: 'item', name: 'Фредди', dropChance: 0.05 },
+			{ type: 'item', name: 'Айсмен', dropChance: 0.05 },
+			{ type: 'item', name: 'Арабский Шейх', dropChance: 0.05 },
+			{ type: 'item', name: 'Бустер', dropChance: 0.05 },
 		],
 	},
 	wayne: {
-		wcoin: [2500, 2900, 3200],
-		items: ['700.000$', '820.000$', '900.000$', 'Дрейк', 'Литвин', 'Илон Маск'],
+		rewards: [
+			{ type: 'wcoin', amount: 2500, dropChance: 0.8 },
+			{ type: 'wcoin', amount: 2900, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 3200, dropChance: 0.7 },
+			{ type: 'item', name: '700.000$', dropChance: 0.5 },
+			{ type: 'item', name: '820.000$', dropChance: 0.4 },
+			{ type: 'item', name: '900.000$', dropChance: 0.3 },
+			{ type: 'item', name: 'Дрейк', dropChance: 0.05 },
+			{ type: 'item', name: 'Литвин', dropChance: 0.05 },
+			{ type: 'item', name: 'Илон Маск', dropChance: 0.05 },
+		],
 	},
 }
+
+// Функция для выпадения награды
+const dropReward = (caseType) => {
+    const rewards = caseRewards[caseType].rewards;
+    const totalChance = rewards.reduce((acc, reward) => acc + reward.dropChance, 0);
+    const chance = Math.random() * totalChance; // Случайное число от 0 до totalChance
+
+    let current = 0;
+    for (const reward of rewards) {
+        if (current <= chance && chance < current + reward.dropChance) {
+            return reward; // Возвращаем выпавшую награду
+        }
+        current += reward.dropChance;
+    }
+    return null; // Если ничего не выпало
+};
 
 const caseTypes = {
 	обычный: 'common',
@@ -402,6 +481,34 @@ async function updateUserStatus(userId, rating, context) {
 	const user = await getUser(userId)
 	let newStatus = user.status // По умолчанию сохраняем текущий статус
 	let rewardWcoin = 0 // Награда за новый статус
+
+	// Список статусов, для которых запрещено изменение
+	const restrictedStatuses = [
+		'Модератор',
+		'Кристаллический инсайт',
+		'Алмазный самбуфер',
+		'Топовый рефер',
+		'Gang',
+		'Mafia',
+		'Коп',
+		'Учитель',
+		'Медик',
+		'Трейдер',
+		'Устойчивый предприниматель',
+		'Bitcoin',
+		'Ton',
+		'Миллионер',
+		'Фармист WCoins',
+		'Искусственный интеллект',
+		'Gamer',
+		'Юрист',
+		'Клановод',
+	]
+
+	// Проверка: если текущий статус пользователя входит в запрещенные, не обновляем статус и не отправляем сообщение
+	if (restrictedStatuses.includes(user.status)) {
+		return user.status // Тихо возвращаем текущий статус без изменений
+	}
 
 	// Определяем новый статус на основе рейтинга
 	if (rating >= 600 && user.status !== 'Опытный') {
@@ -883,13 +990,52 @@ vk.updates.on('chat_invite_user_by_message_request', async context => {
 	}
 })
 
-const shovelTypeMap = {
-	common: 'обычная',
-	silver: 'серебряная',
-	gold: 'золотая',
-	platinum: 'платиновая',
-	wayne: 'wayneлопата',
+// Event
+async function getUserTaskStatus(userId, taskId) {
+	return new Promise((resolve, reject) => {
+		db.get(
+			'SELECT completed FROM user_tasks WHERE vk_id = ? AND task_id = ?',
+			[userId, taskId],
+			(err, row) => {
+				if (err) reject(err)
+				else resolve(row || { completed: false })
+			}
+		)
+	})
 }
+
+async function markTaskAsCompleted(userId, taskId) {
+	return new Promise((resolve, reject) => {
+		db.run(
+			'INSERT OR REPLACE INTO user_tasks (vk_id, task_id, completed) VALUES (?, ?, 1)',
+			[userId, taskId],
+			err => {
+				if (err) reject(err)
+				else resolve()
+			}
+		)
+	})
+}
+
+function loadQuests() {
+	return new Promise((resolve, reject) => {
+		db.all('SELECT * FROM quests', [], (err, rows) => {
+			if (err) return reject(err)
+			rows.forEach(row => {
+				quests[row.id] = { text: row.text, reward: row.reward }
+			})
+			resolve()
+		})
+	})
+}
+
+loadQuests()
+	.then(() => {
+		console.log('Задания загружены:', quests)
+	})
+	.catch(err => {
+		console.error('Ошибка загрузки заданий:', err)
+	})
 
 // Cases command
 
@@ -989,68 +1135,72 @@ async function handleBuyCaseCommand(context, caseType, casePrice) {
 	)
 }
 
-async function handleCaseOpenCommand(context, caseType) {
-	const userId = context.senderId
-	const user = await getUser(userId)
+async function handleCaseOpenCommand(context, caseTypeInput) {
+    const userId = context.senderId;
+    const user = await getUser(userId);
 
-	if (!user) {
+    if (!user) {
+        await context.send(
+            `${await getUserMention(userId)}, 🗿 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
+        );
+        return;
+    }
+
+    const caseType = caseTypes[caseTypeInput];
+
+    if (!caseType) {
+        await context.send(
+            `${await getUserMention(userId)}, 📦 Неизвестный тип кейса: "${caseTypeInput}".`
+        );
+        return;
+    }
+
+    const userCases = await getUserCases(userId);
+
+    if (userCases[caseType] <= 0) {
+        await context.send(
+            `${await getUserMention(userId)}, 📦 У вас нет кейсов типа "${caseTypeInput}".`
+        );
+        return;
+    }
+
+    // Получаем награду
+    const reward = dropReward(caseType); // Используем dropReward для получения награды
+    console.log(`Пользователь ${userId} открыл кейс "${caseTypeInput}" и получил вознаграждение:`, reward);
+
+    // Обновляем базу данных после открытия кейса
+    await updateDatabaseAfterOpening(userId, caseType, reward);
+
+	// Определяем случайный предмет из itemList
+	const randomItem = itemList[Math.floor(Math.random() * itemList.length)]
+	const quantity = Math.floor(Math.random() * 3) + 1 // Количество предмета
+
+	if (reward.type === 'wcoin') {
+		// Обработка WCoin
+		await updateUserWcoin(userId, reward.amount) // Добавляем WCoin
+		await updateUserItems(userId, randomItem, quantity) // Добавляем случайный предмет из itemList
 		await context.send(
 			`${await getUserMention(
 				userId
-			)}, 🗿 Вы не зарегистрированы. Напишите "/reg", чтобы зарегистрироваться.`
+			)}, 🎉 Вы открыли кейс "${caseTypeInput}" и получили ${
+				reward.amount
+			} WCoin и ${quantity} шт. ${randomItem}!`
 		)
-		return
-	}
-
-	const caseTypeEng = caseTypes[caseType]
-	if (!caseTypeEng || !(caseTypeEng in caseRewards)) {
-		await context.send(
-			`${await getUserMention(userId)}, ❌ Неверный тип кейса.`
-		)
-		return
-	}
-
-	const userCases = await getUserCases(userId)
-
-	if (userCases[caseTypeEng] <= 0) {
-		await context.send(
-			`${await getUserMention(userId)}, 📦 У вас нет кейсов типа "${caseType}".`
-		)
-		return
-	}
-
-	// Получаем награду
-	const reward = getRandomReward(caseTypeEng)
-	console.log(
-		`Пользователь ${userId} открыл кейс "${caseType}" и получил вознаграждение: ${reward}`
-	)
-	await updateDatabaseAfterOpening(userId, caseTypeEng, reward)
-
-	if (typeof reward === 'number') {
-		// Обработка WCoin (если награда числовая)
-		const quantity = Math.floor(Math.random() * 3) + 1
-		const randomItem = itemList[Math.floor(Math.random() * itemList.length)]
-		await updateUserItems(userId, randomItem, quantity)
+	} else if (reward.type === 'item') {
+		// Обработка предметов
+		await updateUserItems(userId, randomItem, quantity) // Добавляем случайный предмет из itemList
 		await context.send(
 			`${await getUserMention(
 				userId
-			)}, 🎉 Вы открыли кейс "${caseType}" и получили ${reward} WCoin и ${quantity} шт. ${randomItem}!`
-		)
-	} else {
-		// Обработка предметов (если награда строка)
-		const randomItem = itemList[Math.floor(Math.random() * itemList.length)]
-		const quantity = Math.floor(Math.random() * 3) + 1
-		await updateUserItems(userId, randomItem, quantity)
-		await context.send(
-			`${await getUserMention(
-				userId
-			)}, 🎉 Вы открыли кейс "${caseType}" и получили предмет игровой: ${reward}, ${quantity} шт. ${randomItem}!`
+			)}, 🎉 Вы открыли кейс "${caseTypeInput}" и получили предмет: ${
+				reward.name
+			}, и ${quantity} шт. ${randomItem}!`
 		)
 
 		// Отправляем сообщение администратору только при получении предмета
 		await vk.api.messages.send({
 			user_id: 252840773, // ID администратора
-			message: `Пользователь [id${userId}|${user.nickname}] открыл кейс "${caseType}" и получил предмет: ${reward}, ${quantity} шт. ${randomItem}.`,
+			message: `Пользователь [id${userId}|${user.nickname}] открыл кейс "${caseTypeInput}" и получил предмет: ${reward.name}, и ${quantity} шт. ${randomItem}.`,
 			random_id: Math.floor(Math.random() * 100000),
 		})
 	}
@@ -3237,12 +3387,14 @@ async function showFund(context) {
 }
 
 let currentQuest = null
+let quests = {}
 const lastAttackTime = {}
 const allowedIds = [252840773, 422202607]
 
 vk.updates.on('message_new', async context => {
 	const message = context.text ? context.text : ''
 	const userId = context.senderId
+	const userNickname = await getUserNickname(userId) // получаем никнейм пользователя
 	// Проверяем, зарегистрирован ли пользователь
 	const user = await getUser(userId)
 
@@ -3517,11 +3669,11 @@ vk.updates.on('message_new', async context => {
 				userShovels[shovelType] <= 0
 			) {
 				await context.send(
-					`${await getUserMention(userId)}, ❌ Команда временно не работает, попробуйте скопировать текст ниже и вместо буквы "н" вставить вашу купленную лопату.`
+					`${await getUserMention(
+						userId
+					)}, ❌ Команда временно не работает, попробуйте скопировать текст ниже и вместо буквы "н" вставить вашу купленную лопату.`
 				)
-				await context.send(
-					`/копать клад н`
-				)
+				await context.send(`/копать клад н`)
 				return
 			}
 
@@ -3723,7 +3875,7 @@ vk.updates.on('message_new', async context => {
 			await context.send(
 				`${await getUserMention(
 					userId
-				)}, 🎮 Играй в мини-игры и зарабатывай больше WCoin!\n\n/wbar - создавай комнаты или принимай ставки. Осторожно, можно увлечься.\n\n/тап - просто пиши команду, прокачивай её и зарабатывай WCoin (запрещено использовать в беседах!)\n\nСкоро будет больше игр...`
+				)}, 🎮 Играй в мини-игры и зарабатывай больше WCoin!\n\n/wbar - создавай комнаты или принимай ставки. Осторожно, можно увлечься.\n\n/тап - просто пиши команду, прокачивай её и зарабатывай WCoin (запрещено использовать в беседах!)\n\n/число - Угадай число. Бот задает число, а игроки должны угадать это число, счет ведет бот. Победитель получает WCoin с призового фонда.\n\nСкоро будет больше игр...`
 			)
 		} else if (command === 'commands') {
 			await context.send(
@@ -3732,11 +3884,21 @@ vk.updates.on('message_new', async context => {
 				)}, ⚙ Доступные команды: используйте "/".\n\n🏆Аккаунт:\n👤"профиль"\n💸"передать"\n💰"usepromo"\n📝"сменить ник"\n📈"рефералка"\n"ref".\n\n🏪WShop:\n🛍"Рынок[wmarkets]"\n"Статусы" [NEW]\n📦Кейсы:\n🎒"кейсы"\n💳"купить кейс"\n🎰"открыть кейс [название]"\n🥄Лопаты:\n🎒"лопаты"\n💳"купить лопату [название_лопаты]"\n\n🎱Развлечения:\n🛡"Клан[wclan]"\n🎲"бар [wbar]"\n💎"бонус"\n🍀"клады"\n🔥"событие"\n👉"тапалка" [NEW]\n🏦"фонд"\n📈"winvest"\n\n🛠Прочее:\n💻"панель(/п)"\n👑"топ"\n⛔"правила"\n💬"команды"\n🆘"помощь"\n\n🔮VIP🔮\n👘"мерч"\n🥇"vip"`
 			)
 		} else if (command === 'event') {
-			await context.send(
-				`${await getUserMention(
-					userId
-				)}, WStars: 0⭐\n\nСписок доступных квестов:\n--Тестовое задание. Награда: 1WStars [✅]\n--Тестовое задание. Награда: 100WCoin [❌]\n--Тестовое задание. Награда: 1⭐ [ ]\n\n-Тестовое задание\nНаграда: 1WStars\n\nОбмен WCoin на WStars по курсу 1⭐ = WCoin\nОбменять звездочки на Дроп - /vip`
-			)
+			let questList = 'Список доступных квестов:\n'
+
+			for (const taskId in quests) {
+				const quest = quests[taskId]
+				const taskStatus = await getUserTaskStatus(userId, taskId)
+				const statusIcon = taskStatus.completed ? '✅' : '❌'
+				questList += `-- ${quest.text}. Награда: ${quest.reward} WCoin [${statusIcon}]\n`
+			}
+
+			if (questList === 'Список доступных квестов:\n') {
+				questList += 'Нет активных заданий.'
+			}
+
+			await context.send(questList)
+			return
 		}
 	}
 
@@ -4757,7 +4919,7 @@ vk.updates.on('message_new', async context => {
 			let wcoin = 0
 
 			if (promoCode === '#waynes' || userId === 252840773) {
-				wcoin = 100 // Промокод даёт 100 WCoin
+				wcoin = 400 // Промокод даёт 400 WCoin
 			}
 
 			// Генерация реферального кода для нового пользователя
@@ -5050,7 +5212,9 @@ vk.updates.on('message_new', async context => {
 
 		if (!userCases) {
 			await context.send(
-				`${await getUserMention(userId)}, 🗿 у вас еще нет купленных кейсов.`
+				`${await getUserMention(
+					userId
+				)}, 🗿 у вас еще нет купленных кейсов.\n\nСписок призов: /кейсы награды`
 			)
 		} else {
 			await context.send(`${await getUserMention(userId)}, 📦 Ваши кейсы:
@@ -5058,7 +5222,9 @@ vk.updates.on('message_new', async context => {
                 📦Серебряный: ${userCases.silver}
                 🎁Золотой: ${userCases.gold}
                 🎁Платиновый: ${userCases.platinum}
-                💼WayneCase: ${userCases.wayne}`)
+                💼WayneCase: ${
+									userCases.wayne
+								}\n\nСписок призов: /кейсы награды`)
 		}
 	}
 	if (message === '/открыть кейс обычный') {
@@ -5137,7 +5303,7 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.1.3`)
+		await context.send(`1.1.4`)
 	} else if (message.startsWith('/кейсы награды')) {
 		await context.send(
 			`${await getUserMention(
@@ -5372,7 +5538,7 @@ vk.updates.on('message_new', async context => {
 
 		if (allowedIds.includes(userId)) {
 			await context.send(
-				`Список команд администратора:\n/выдать [ID/@упоминание] [кол-во WCoin - или +]\n/givestatus [ID/ссылка/упоминание] [Статус]\n/givemd [ID/упоминание]\n/delmd [ID/упоминание]\n/ccreatpromo [код] [сумма] [кол-во активаций]\n/creatpromo [текст] [сумма]\n/delpromo [текст]\n/рассылка [текст]\n/creatquest [текст]\n/delquest\n/clearvillage [название деревни]\n/clearwarvillage\n/villagesinfo`
+				`Список команд администратора:\n/выдать [ID/@упоминание] [кол-во WCoin - или +]\n/givestatus [ID/ссылка/упоминание] [Статус]\n/givemd [ID/упоминание]\n/delmd [ID/упоминание]\n/ccreatpromo [код] [сумма] [кол-во активаций]\n/creatpromo [текст] [сумма]\n/delpromo [текст]\n/рассылка [текст]\n/creatquest [текст]\n/delquest\n/creativent [номер задания] [задание] [кол-во WCoin]\n/checkivent [номер задания] [@упоминание_пользователя]\n/delivent [номер задания]\n/clearvillage [название деревни]\n/clearwarvillage\n/villagesinfo`
 			)
 		} else {
 			await context.send(
@@ -5386,10 +5552,12 @@ vk.updates.on('message_new', async context => {
 
 		if (
 			status === 'Модератор' ||
-			(status === 'Администратор') ||
-			(allowedIds.includes(userId))
+			status === 'Администратор' ||
+			allowedIds.includes(userId)
 		) {
-			await context.send(`Список команд модератора:\n/штраф [ID/упоминание]`)
+			await context.send(
+				`Список команд модератора:\n/штраф [ID/упоминание]\n/checkivent [номер задания] [@упоминание_пользователя]\n/число cleargame\n/число кик [ID/упоминание пользователя]`
+			)
 		} else {
 			await context.send(
 				`${await getUserMention(
@@ -5397,7 +5565,8 @@ vk.updates.on('message_new', async context => {
 				)}, 😡 У вас нет прав для выполнения этой команды.`
 			)
 		}
-	} if (message.startsWith('/штраф')) {
+	}
+	if (message.startsWith('/штраф')) {
 		const status = await getUserStatus(userId)
 
 		// Проверка, имеет ли пользователь права (модератор или администратор)
@@ -5766,6 +5935,424 @@ vk.updates.on('message_new', async context => {
 				)}, 😡 У вас нет прав для выполнения этой команды.`
 			)
 		}
+	}
+	if (message.startsWith('/creativent')) {
+		const args = message.split(' ')
+		const taskId = args[1]
+		const taskText = args.slice(2, -1).join(' ')
+		const reward = parseInt(args[args.length - 1], 10)
+
+		if (!allowedIds.includes(userId)) {
+			return context.send('У вас нет прав для создания задания.')
+		}
+
+		// Сохранение задания в базу данных
+		db.run(
+			'INSERT INTO quests (id, text, reward) VALUES (?, ?, ?)',
+			[taskId, taskText, reward],
+			err => {
+				if (err) {
+					return context.send('Ошибка создания задания.')
+				}
+
+				quests[taskId] = { text: taskText, reward }
+				context.send(
+					`Задание #${taskId} создано: ${taskText} (Награда: ${reward} WCoin)`
+				)
+			}
+		)
+		return
+	}
+
+	// Команда для удаления задания
+	if (message.startsWith('/delivent')) {
+		const args = message.split(' ')
+		const taskId = args[1]
+
+		if (!allowedIds.includes(userId)) {
+			return context.send('У вас нет прав для удаления заданий.')
+		}
+
+		if (quests[taskId]) {
+			// Удаление задания из базы данных
+			db.run('DELETE FROM quests WHERE id = ?', [taskId], err => {
+				if (err) {
+					return context.send('Ошибка удаления задания.')
+				}
+
+				delete quests[taskId]
+				context.send(`Задание #${taskId} удалено.`)
+			})
+		} else {
+			context.send(`Задание #${taskId} не найдено.`)
+		}
+		return
+	}
+
+	// Команда для проверки выполнения задания
+	if (message.startsWith('/checkivent')) {
+		const args = message.split(' ')
+		const taskId = args[1]
+		const target = args[2]
+
+		// Получаем статус пользователя
+		const status = await getUserStatus(userId)
+
+		// Проверка, имеет ли пользователь права (модератор, администратор или в списке разрешённых ID)
+		if (
+			status !== 'Модератор' &&
+			status !== 'Администратор' &&
+			!allowedIds.includes(userId)
+		) {
+			return context.send('❌ У вас нет прав для проверки заданий.')
+		}
+
+		const targetUserId = await resolveUserId(target)
+		if (!quests[taskId]) {
+			return context.send(`Задание #${taskId} не найдено.`)
+		}
+
+		// Проверяем, было ли задание уже выполнено
+		const taskStatus = await getUserTaskStatus(targetUserId, taskId)
+		if (taskStatus.completed) {
+			return context.send(`Пользователь уже выполнил задание #${taskId}.`)
+		}
+
+		// Логика начисления награды
+		const reward = quests[taskId].reward
+
+		const targetUsername = await getUserNickname(targetUserId) // Получаем имя пользователя, которому выдано вознаграждение
+
+		// Обновляем WCoin пользователя
+		await updateUserWcoin(targetUserId, reward)
+
+		// Обновляем статус выполнения задания
+		await markTaskAsCompleted(targetUserId, taskId)
+
+		await context.send(
+			`Пользователю [id${targetUserId}|${targetUsername}] за задание #${taskId} начислено ${reward} WCoin.`
+		)
+
+		// Формируем сообщение с полной информацией
+		const adminId = 252840773
+		const adminUsername = await getUserNickname(userId) // Получаем имя пользователя, выполнившего команду
+
+		const notificationMessage = `🔔 Команда /checkivent была выполнена:
+- Выполнил: [id${userId}|${adminUsername}]
+- Выдано: [id${targetUserId}|${targetUsername}]
+- Задание: #${taskId}
+- Награда: ${reward} WCoin`
+
+		// Отправляем уведомление пользователю 252840773 в личные сообщения
+		await vk.api.messages.send({
+			user_id: adminId, // ID пользователя, которому отправляется сообщение
+			message: notificationMessage,
+			random_id: Math.floor(Math.random() * 1000000), // Генерация случайного идентификатора для сообщения
+		})
+		return
+	} // Команда /число — вывод всех команд
+	if (message === '/число') {
+		return context.send(`
+            Команды игры "Угадай число":
+            1. /число играть - Присоединиться к игре 80WCoin (первый написавший становится создателем)
+            2. /число начать - Начать игру (только для создателя, минимум 2 игрока)
+            3. /число [число] - Угадать число в свой ход\n4. /число выйти - Выйти из активной игры\n5. /число репорт [ID/упоминание пользователя] - если игрок не отвечает, можно позвать модераторов
+        `)
+	}
+
+	if (message === '/число играть') {
+		const user = await getUser(userId)
+		if (!user) {
+			return context.send(
+				`${await getUserMention(
+					userId
+				)}, для участия вам нужно зарегистрироваться. Введите /reg.`
+			)
+		}
+		if (user.wcoin < 80) {
+			return context.send(
+				`${await getUserMention(
+					userId
+				)}, у вас недостаточно WCoin для участия. Требуется минимум 80 WCoin.`
+			)
+		}
+
+		if (!gameState.isGameActive) {
+			// Игра еще не началась
+			if (!gameState.players.includes(userId)) {
+				gameState.players.push(userId)
+				if (!gameState.gameCreator) {
+					gameState.gameCreator = userId // Первый игрок — создатель игры
+					context.send(
+						`🎮 ${await getUserMention(
+							userId
+						)} создал игру. Теперь вы можете собираться в группу, как будете готовы, создатель должен написать: /число начать`
+					)
+				}
+				return context.send(
+					`${await getUserMention(userId)} присоединился к игре!👥`
+				)
+			} else {
+				return context.send(
+					`${await getUserMention(userId)}, вы уже участвуете в игре.🎮`
+				)
+			}
+		} else {
+			return context.send(
+				`${await getUserMention(
+					userId
+				)}, игра уже идет. Дождитесь следующего раунда.🎮`
+			)
+		}
+	}
+
+	// Команда /число начать — только создатель игры может начать игру
+	if (message === '/число начать') {
+		if (gameState.isGameActive) {
+			return context.send('Игра уже началась!🎮')
+		}
+		if (userId !== gameState.gameCreator) {
+			return context.send('Только создатель игры может её начать.')
+		}
+		if (gameState.players.length < 2) {
+			return context.send(
+				'Недостаточно игроков для начала игры. Нужно минимум 2 участника.👥'
+			)
+		}
+
+		// Проверка и списание 80 WCoin с каждого игрока
+		prizeFund = 0 // Сбрасываем призовой фонд перед началом
+		for (let playerId of gameState.players) {
+			const player = await getUser(playerId)
+
+			if (!player || player.wcoin < 80) {
+				return context.send(
+					`${await getUserMention(
+						playerId
+					)}, у вас недостаточно WCoin для участия. Вам нужно минимум 80 WCoin.`
+				)
+			}
+
+			// Списываем WCoin
+			await updateUserWcoin(playerId, -80)
+			prizeFund += 80 // Увеличиваем призовой фонд
+			context.send(
+				`С ${await getUserMention(
+					playerId
+				)} списано 80 WCoin за участие в игре.`
+			)
+		}
+
+		// Генерация случайного числа
+		gameState.secretNumber =
+			Math.floor(
+				Math.random() * (gameState.maxRange - gameState.minRange + 1)
+			) + gameState.minRange
+		console.log(`Сгенерированное число: ${gameState.secretNumber}`)
+		gameState.isGameActive = true
+		gameState.currentPlayer = gameState.players[0] // Первый ход за первым игроком
+
+		return context.send(
+			`Игра началась!😱 Угадайте число от ${gameState.minRange} до ${
+				gameState.maxRange
+			}\nСейчас ход ${await getUserMention(
+				gameState.currentPlayer
+			)}🎮\nПризовой фонд: ${prizeFund} WCoin.💰\nУчастников: ${
+				gameState.players.length
+			}👥\n\nВводите команду: /число [от 0 до 300]`
+		)
+	}
+
+	// Команда /число выйти — позволяет выйти из активной игры
+	if (message === '/число выйти') {
+		if (!gameState.isGameActive) {
+			return context.send('Игра еще не началась, выход невозможен.')
+		}
+
+		if (!gameState.players.includes(userId)) {
+			return context.send('Вы не участвуете в этой игре.')
+		}
+
+		// Убираем игрока из игры
+		gameState.players = gameState.players.filter(
+			playerId => playerId !== userId
+		)
+
+		// Если после выхода остался только один игрок, он выигрывает
+		if (gameState.players.length === 1) {
+			const remainingPlayer = gameState.players[0]
+			context.send(
+				`🎮 ${await getUserMention(
+					userId
+				)} вышел из игры. В игре остался только ${await getUserMention(
+					remainingPlayer
+				)}. Он получает весь призовой фонд в размере ${prizeFund} WCoin!`
+			)
+
+			// Зачисляем призовой фонд оставшемуся игроку
+			await updateUserWcoin(remainingPlayer, prizeFund)
+
+			resetGameState() // Сброс состояния игры
+			return
+		}
+
+		// Обновляем информацию и передаем ход следующему игроку
+		const currentIndex = gameState.players.indexOf(userId)
+		gameState.currentPlayer =
+			gameState.players[(currentIndex + 1) % gameState.players.length]
+		context.send(
+			`🎮 ${await getUserMention(
+				userId
+			)} вышел из игры. Теперь ходит ${await getUserMention(
+				gameState.currentPlayer
+			)}.`
+		)
+	}
+
+	if (message.startsWith('/число репорт ')) {
+		const target = message.split(' ')[2]
+		const reportedUserId = await resolveUserId(target)
+
+		if (!reportedUserId) {
+			return context.send(
+				'Не удалось распознать пользователя. Убедитесь, что введен правильный ID или ссылка.'
+			)
+		}
+
+		const reporterUserMention = await getUserMention(userId)
+		const reportedUserMention = await getUserMention(reportedUserId)
+
+		// Отправка репорта в беседу модераторов
+		await vk.api.messages.send({
+			peer_id: 2000000009, // ID беседы модераторов (c179)
+			message: `@all\n\n🚨 Репорт от ${reporterUserMention} на пользователя ${reportedUserMention}. Проверьте ситуацию.`,
+			random_id: Date.now(), // Генерация random_id
+		})
+
+		// Уведомление пользователя о том, что репорт отправлен
+		return context.send(
+			`Ваш репорт на пользователя ${reportedUserMention} был отправлен модераторам. Спасибо за сообщение!`
+		)
+	}
+
+	// Проверка статуса пользователя
+	const status = await getUserStatus(userId)
+	const isModeratorOrAdmin =
+		status === 'Модератор' ||
+		status === 'Администратор' ||
+		allowedIds.includes(userId)
+	// Команда /число cleargame
+	if (message.startsWith('/число cleargame')) {
+		if (!isModeratorOrAdmin) {
+			return await context.send(
+				`${await getUserMention(
+					userId
+				)}, 😡 У вас нет прав для выполнения этой команды.`
+			)
+		}
+
+		if (!gameState.isGameActive) {
+			return await context.send('Нет активной игры для удаления.')
+		}
+
+		// Возвращаем WCoin всем игрокам из призового фонда
+		for (const playerId of gameState.players) {
+			await updateUserWcoin(playerId, prizeFund / gameState.players.length) // Возвращаем равную долю
+		}
+
+		// Сбрасываем состояние игры
+		resetGameState()
+
+		return await context.send(
+			'Активная игра была удалена, все WCoin возвращены на баланс игрокам.'
+		)
+	}
+
+	// Команда /число кик [ID/упоминание пользователя]
+	else if (message.startsWith('/число кик ')) {
+		if (!isModeratorOrAdmin) {
+			return await context.send(
+				`${await getUserMention(
+					userId
+				)}, 😡 У вас нет прав для выполнения этой команды.`
+			)
+		}
+
+		const target = message.split(' ')[2]
+		const kickedUserId = await resolveUserId(target) // Получаем ID исключаемого пользователя
+
+		if (!kickedUserId || !gameState.players.includes(kickedUserId)) {
+			return await context.send(
+				'Не удалось распознать пользователя или он не участвует в игре.'
+			)
+		}
+
+		// Исключаем пользователя из игры
+		gameState.players = gameState.players.filter(
+			player => player !== kickedUserId
+		)
+		await context.send(
+			`Пользователь ${await getUserMention(kickedUserId)} был исключен из игры.`
+		)
+
+		// Если в игре остались игроки, сообщаем о ходе следующего игрока
+		if (gameState.players.length > 0) {
+			gameState.currentPlayer = gameState.players[0] // Устанавливаем следующего игрока
+			return await context.send(
+				`Теперь ход ${await getUserMention(gameState.currentPlayer)}.`
+			)
+		} else {
+			return await context.send('Все игроки исключены из игры. Игра завершена.')
+		}
+	}
+
+	// Команда для угадывания числа, например /число 120
+	if (message.startsWith('/число ')) {
+		if (!gameState.isGameActive) {
+			return context.send(
+				'Игра еще не началась. Напишите /число играть, чтобы присоединиться.👥'
+			)
+		}
+
+		if (userId !== gameState.currentPlayer) {
+			return context.send(
+				`Сейчас ход ${await getUserMention(gameState.currentPlayer)}🎮.`
+			)
+		}
+
+		// Получаем число из сообщения
+		const guess = parseInt(message.split(' ')[1], 10)
+
+		if (isNaN(guess)) {
+			return context.send('Введите корректное число.')
+		}
+
+		// Проверка на правильность числа
+		if (guess === gameState.secretNumber) {
+			context.send(
+				`Поздравляем!🥳 ${await getUserMention(userId)} угадал число ${
+					gameState.secretNumber
+				}! Игра завершена.🎮 Призовой фонд ${prizeFund} WCoin зачислен на ваш баланс🤩`
+			)
+
+			// Зачисление призового фонда победителю
+			await updateUserWcoin(userId, prizeFund)
+
+			resetGameState() // Сброс состояния игры
+			return
+		} else if (guess < gameState.secretNumber) {
+			context.send('Число больше🔺')
+		} else {
+			context.send('Число меньше🔻')
+		}
+
+		// Переход хода к следующему игроку
+		const currentIndex = gameState.players.indexOf(userId)
+		gameState.currentPlayer =
+			gameState.players[(currentIndex + 1) % gameState.players.length]
+		context.send(
+			`Теперь ходит ${await getUserMention(gameState.currentPlayer)}🎮`
+		)
 	} else if (message === '/начать путь') {
 		await context.send({
 			message:
@@ -6028,7 +6615,7 @@ vk.updates.on('message_new', async context => {
 		await context.send(
 			'Я рада, что ты решил уточнить этот вопрос.\n\nНаш блог разработки: https://vk.com/waynes_development\nЗдесь ты узнаешь о новых обновлениях и новых промокодах.\n\nНаша официальная группа: https://vk.com/waynes_family\nЗдесь ты можешь предлагать улучшения, говорить о багах, нарушениях и выводить призы.\n\nПожалуйста, запомни. Мы не просим пароли и не прокачиваем аккаунты. Мы не пишем сами (искл. официальная группа, смотри внимательнее на ссылку).'
 		)
-	} 
+	}
 })
 
 // Функция обновления рейтинга
@@ -6102,4 +6689,4 @@ setInterval(async () => {
 	}
 }, 60000) // Проверяем каждую минуту
 
-console.log('Скрипт запущен 1.1.3')
+console.log('Скрипт запущен 1.1.4')
