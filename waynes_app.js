@@ -1,4 +1,5 @@
 const { VK, Keyboard } = require('vk-io')
+const { Telegraf, Markup } = require('telegraf')
 const sqlite3 = require('sqlite3').verbose()
 const { setInterval } = require('timers')
 
@@ -6,6 +7,21 @@ const vk = new VK({
 	token:
 		'vk1.a.Q9NkX2X7k4yvab34BKje68dL3oPj4PJASDuRlG6i2zmxz_QAyM3HK8D7vAM13nXeqyiInnEeC-RhjrM8-2S2KhiJ30WcnTKBoV928ugwl4VodYBiKChgq9UDwBULA6GsQ-cuPnzT8WYuy9AhaMnLtvXo0sUvjUkrsUeXLQa5BbB5nx1DyP4nJplvlQTx9OM1Ov2xn5VKxQ5o1_b1uGbJ4g',
 })
+
+const token = '7511515205:AAGsqrKfGHhqyrpKt5XVQvR0m-ryFd8HhSE'
+const webAppUrl = 'https://waynes-app.web.app'
+const bot = new Telegraf(token)
+
+bot.command('start', ctx => {
+	ctx.reply(
+		'Hello! Press to start the app\n\nВпервые здесь можно обменивать платные подписки на WCoin!🎁',
+		Markup.inlineKeyboard([
+			Markup.button.webApp('Waynes App', `${webAppUrl}?ref=${ctx.payload}`),
+		])
+	)
+})
+
+bot.launch()
 
 const db = new sqlite3.Database('users.db')
 
