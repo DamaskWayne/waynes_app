@@ -3,12 +3,20 @@ const { Telegraf, Markup } = require('telegraf')
 const sqlite3 = require('sqlite3').verbose()
 const { setInterval } = require('timers')
 
+const { createClient } = require('@supabase/supabase-js')
+
+const SUPABASE_URL = 'https://uphcnbjehmckcjwxmhyh.supabase.co'
+const SUPABASE_API_KEY =
+	'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwaGNuYmplaG1ja2Nqd3htaHloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAyMjIyNTMsImV4cCI6MjA0NTc5ODI1M30.xy6I9NYw6WaUlX48LNYDSpOkoPYFRnVJBa_kQsD3faU'
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_API_KEY)
+
 const vk = new VK({
 	token:
 		'vk1.a.Q9NkX2X7k4yvab34BKje68dL3oPj4PJASDuRlG6i2zmxz_QAyM3HK8D7vAM13nXeqyiInnEeC-RhjrM8-2S2KhiJ30WcnTKBoV928ugwl4VodYBiKChgq9UDwBULA6GsQ-cuPnzT8WYuy9AhaMnLtvXo0sUvjUkrsUeXLQa5BbB5nx1DyP4nJplvlQTx9OM1Ov2xn5VKxQ5o1_b1uGbJ4g',
 })
 
-const token = '7511515205:AAGsqrKfGHhqyrpKt5XVQvR0m-ryFd8HhSE'
+const token = '7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA'
 const webAppUrl = 'https://waynes-app.web.app'
 const bot = new Telegraf(token)
 
@@ -21,7 +29,250 @@ bot.command('start', ctx => {
 	)
 })
 
+bot.command('help', async ctx => {
+	const telegramId = ctx.from.id // ID Telegram пользователя
+	await ctx.reply(
+		`Ваш ID Telegram: ${telegramId}\n\nИспользуйте команду /auth чтобы перевести WCoin в вк бота.\n/start открыть веб-приложение.`
+	)
+})
+
+bot.command('auth', async (ctx) => {
+    // Получаем userId из контекста
+    const userId = ctx.from.id; // Используем ctx.from.id вместо ctx.senderId
+
+    // Проверяем привязку аккаунта в Supabase
+    const { data: foundUser, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('telegram', userId)
+        .single();
+
+    if (error || !foundUser) {
+        return await ctx.reply('⚠ Ваш аккаунт не привязан к Telegram. Используйте команду для привязки.');
+    }
+
+    // Проверяем, привязан ли VK
+    if (!foundUser.vk) {
+        return await ctx.reply('⚠ Вы не привязали свой аккаунт VK к Telegram.\nПерейдите в личные сообщения бота https://vk.cc/cE1gYV и напишите команду /auth для привязки.');
+    }
+
+    // Запрашиваем количество WCoin для перевода
+    await ctx.reply('Введите количество WCoin для отправки в VK бот:');
+    
+    // Ожидаем следующего сообщения от пользователя
+    bot.on('text', async (msgCtx) => {
+		if (msgCtx.chat.type === 'private') {
+			// Проверяем, что это сообщение от того же пользователя
+        if (msgCtx.from.id === userId) {
+            const wcoinAmount = parseInt(msgCtx.message.text, 10);
+            
+            if (!isNaN(wcoinAmount) && wcoinAmount > 0) {
+                // Проверяем, есть ли достаточное количество score
+                if (foundUser.score < wcoinAmount) {
+                    return await msgCtx.reply('⚠ Недостаточно WCoin для перевода.');
+                }
+
+                // Вычитаем WCoin из score в Supabase
+                const newScore = foundUser.score - wcoinAmount;
+                const { error: updateError } = await supabase
+                    .from('users')
+                    .update({ score: newScore })
+                    .eq('telegram', userId);
+
+                if (updateError) {
+                    return await msgCtx.reply('⚠ Ошибка при обновлении баланса. Повторите попытку позже.');
+                }
+
+                // Добавляем WCoin в SQLite
+                await db.run(
+                    'UPDATE users SET wcoin = wcoin + ? WHERE vk_id = ?',
+                    [wcoinAmount, foundUser.vk],
+                    (err) => {
+                        if (err) {
+                            console.error('Ошибка обновления WCoin:', err);
+                            return msgCtx.reply('⚠ Ошибка при обновлении WCoin.');
+                        } else {
+                            return msgCtx.reply(`✅ Успешно переведено ${wcoinAmount} WCoin на счет в VK бота.`);
+                        }
+                    }
+                );
+            } else {
+                await msgCtx.reply('⚠ Указано некорректное количество WCoin для перевода.');
+            }
+        }
+		}
+	});
+});
+
 bot.launch()
+
+async function sendVkNotification(vkUserId, message) {
+	const vkMessage = {
+		user_id: vkUserId,
+		message: message,
+		random_id: Math.floor(Math.random() * 100000)
+	};
+
+	await fetch(`https://api.vk.com/method/messages.send`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({
+			...vkMessage,
+			v: '5.199', // версия API
+			access_token: 'vk1.a.602MQ_cJzBYb8CqLTO2amczP1ffK7RqpFKUWswatVLAnc0MrwpePuCbYAffW3Bhlg35mtcgG3pl4UdqG8AHG_6G_mg-ku2nmrkRGmIkGU6VBu7PHVFAkbplwlmE6pN-Bp8kBjvqdsb4eq4daz8h030w2JNTOe8L78lw_1N8pnCxV9vybm7n_ldx2mD3b2-TzZQrxHAf6L2htnqJxFtzzEg' // замените на ваш токен
+		})
+	});
+}
+
+async function handleAuthCommand(context, message) {
+	const userId = context.senderId
+	const args = message.split(' ')
+
+	// Проверка на количество аргументов
+	if (args.length < 2) {
+		return await context.send(
+			'Используйте команду /auth login [ID Telegram] для привязки аккаунта или /auth [кол-во WCoin] для перевода WCoin в веб-приложение.\n\nID вашего Telegram аккаунта можно узнать в Телеграм боте по команде /help.'
+		)
+	}
+
+	const command = args[1]
+	const input = args[2] // Берем второй аргумент для ID Telegram или суммы WCoin
+
+	if (command === 'login') {
+		// Проверка: попытка найти введенный ID в базе как Telegram ID
+		const telegramID = parseInt(input, 10)
+		if (!isNaN(telegramID)) {
+			// Проверяем, привязан ли аккаунт VK к Telegram
+			const { data: foundUserByVk, error: errorByVk } = await supabase
+				.from('users')
+				.select('*')
+				.eq('vk', userId)
+				.single()
+
+			// Если найден пользователь с таким VK ID и Telegram уже привязан, сообщаем об этом
+			if (foundUserByVk && foundUserByVk.telegram) {
+				return await context.send(
+					'⚠ Ваш аккаунт VK уже привязан к аккаунту Telegram и не может быть привязан повторно.'
+				)
+			}
+
+			// Проверяем, привязан ли Telegram ID к другому VK
+			const { data: foundUserByTelegram, error: errorByTelegram } =
+				await supabase
+					.from('users')
+					.select('*')
+					.eq('telegram', telegramID)
+					.single()
+
+			if (!foundUserByTelegram) {
+				return await context.send(
+					'⚠ Указанный ID Telegram не найден, в списке зарегистрированных в веб-приложении.'
+				)
+			}
+
+			// Если найден пользователь с таким Telegram ID и VK уже привязан, сообщаем об этом
+			if (foundUserByTelegram && foundUserByTelegram.vk) {
+				return await context.send(
+					'⚠ Этот аккаунт Telegram уже привязан к другому аккаунту VK.'
+				)
+			}
+
+			// Выполняем привязку
+			const { error: updateError } = await supabase
+				.from('users')
+				.update({ vk: userId })
+				.eq('telegram', telegramID)
+
+			if (updateError) {
+				return await context.send(
+					'Ошибка при привязке аккаунта. Повторите попытку позже.'
+				)
+			}
+
+			return await context.send(
+				'✅ Ваш аккаунт успешно привязан! Теперь вы можете перевести WCoin с помощью команды /auth [кол-во WCoin].'
+			)
+		} else {
+			return await context.send('⚠ Указан некорректный ID Telegram.')
+		}
+	}
+
+	// Проверка как сумму WCoin
+	const wcoinAmount = parseInt(command, 10)
+	if (!isNaN(wcoinAmount) && wcoinAmount > 0) {
+		const user = await getUser(userId)
+		if (!user || user.wcoin < wcoinAmount) {
+			return await context.send(
+				'⚠ Недостаточно WCoin или вы не зарегистрированы /reg.'
+			)
+		}
+
+		// Проверка привязки аккаунта в Supabase
+		const { data: foundUser, error } = await supabase
+			.from('users')
+			.select('*')
+			.eq('vk', userId)
+			.single()
+
+		if (error || !foundUser || !foundUser.telegram) {
+			return await context.send(
+				'⚠ Сначала привяжите аккаунт с помощью /auth login [ID Telegram].'
+			)
+		}
+
+		// Перевод WCoin
+		const newScore = foundUser.score + wcoinAmount
+
+		const { error: updateError } = await supabase
+			.from('users')
+			.update({ score: newScore })
+			.eq('vk', userId)
+
+		if (updateError) {
+			return await context.send(
+				'⚠ Ошибка при обновлении баланса. Повторите попытку позже.'
+			)
+		}
+
+		await sendTelegramNotification(foundUser.telegram, `✅ Ваш счет пополнен на ${wcoinAmount} WCoin из VK.`);
+
+		db.run(
+			'UPDATE users SET wcoin = wcoin - ? WHERE vk_id = ?',
+			[wcoinAmount, userId],
+			err => {
+				if (err) {
+					console.error('Ошибка обновления WCoin:', err)
+					return context.send('⚠ Ошибка при обновлении WCoin.')
+				} else {
+					context.send(
+						`✅ Успешно переведено ${wcoinAmount} WCoin на счет в веб-приложение.`
+					)
+				}
+			}
+		)
+	} else {
+		await context.send('⚠ Указано некорректное количество WCoin для перевода.')
+	}
+}
+
+async function sendTelegramNotification(telegramId, message) {
+	const telegramMessage = {
+		chat_id: telegramId,
+		text: message,
+		parse_mode: 'Markdown'
+	};
+
+	// Используйте fetch или другую библиотеку для отправки POST-запроса к Telegram API
+	await fetch(`https://api.telegram.org/bot7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA/sendMessage`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify(telegramMessage)
+	});
+}
 
 const db = new sqlite3.Database('users.db')
 
@@ -454,13 +705,21 @@ function calculateReward(shovel) {
 
 // Account
 // Функция обновления баланса WCoin
-async function updateUserWcoin(userId, amount, fromMessage = false) {
+async function updateUserWcoin(userId, amount, vkID, wcoinChange, fromMessage = false) {
 	const user = await getUser(userId)
+	const newWcoin = user.wcoin + wcoinChange
 
 	// Если это начисление за сообщение, проверяем статус
 	if (fromMessage && user.status !== 'Яркий' && user.status !== 'Любопытный') {
 		return // Если статус не подходит, не начисляем WCoin за сообщение
 	}
+
+	if (user.telegram) {
+        await supabase
+            .from('users')
+            .update({ score: newWcoin })
+            .eq('vk', vkID)
+    }
 
 	// Начисляем WCoin
 	return new Promise((resolve, reject) => {
@@ -3891,7 +4150,7 @@ vk.updates.on('message_new', async context => {
 			await context.send(
 				`${await getUserMention(
 					userId
-				)}, 🎮 Играй в мини-игры и зарабатывай больше WCoin!\n\n/wbar - создавай комнаты или принимай ставки. Осторожно, можно увлечься.\n\n/тап - просто пиши команду, прокачивай её и зарабатывай WCoin (запрещено использовать в беседах!)\n\n/число - Угадай число. Бот задает число, а игроки должны угадать это число, счет ведет бот. Победитель получает WCoin с призового фонда.\n\nСкоро будет больше игр...`
+				)}, 🎮 Играй в мини-игры и зарабатывай больше WCoin!\n\n/wbar - создавай комнаты или принимай ставки. Осторожно, можно увлечься.\n\n/тап - просто пиши команду, прокачивай её и зарабатывай WCoin (запрещено использовать в беседах!)\n\nСкоро будет больше игр...`
 			)
 		} else if (command === 'commands') {
 			await context.send(
@@ -6369,6 +6628,8 @@ vk.updates.on('message_new', async context => {
 		context.send(
 			`Теперь ходит ${await getUserMention(gameState.currentPlayer)}🎮`
 		)
+	} else if (message.startsWith('/auth')) {
+		await handleAuthCommand(context, message);
 	} else if (message === '/начать путь') {
 		await context.send({
 			message:
