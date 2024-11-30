@@ -36,7 +36,7 @@ bot.command('help', async ctx => {
 	)
 })
 
-bot.command('auth', async (ctx) => {
+bot.command('gfhrthrthdgauth', async (ctx) => {
     // Получаем userId из контекста
     const userId = ctx.from.id; // Используем ctx.from.id вместо ctx.senderId
 
@@ -1334,11 +1334,11 @@ async function sendCaseList(context) {
     "купить кейс [название]"
     
     Доступные кейсы и их стоимость:
-    📦 Обычный кейс: 700 WCoin
-    📦 Серебряный кейс: 3000 WCoin
-    🎁 Золотой кейс: 4000 WCoin
-    🎁 Платиновый кейс: 8000 WCoin
-    💼 WayneCase: 10000 WCoin`)
+    📦 Обычный кейс: 1000 WCoin
+    📦 Серебряный кейс: 4000 WCoin
+    🎁 Золотой кейс: 6000 WCoin
+    🎁 Платиновый кейс: 10000 WCoin
+    💼 WayneCase: 20000 WCoin`)
 }
 
 async function getUserCases(vk_id) {
@@ -5473,15 +5473,15 @@ vk.updates.on('message_new', async context => {
 	if (message === '/купить кейс') {
 		await sendCaseList(context)
 	} else if (message === '/купить кейс обычный') {
-		await handleBuyCaseCommand(context, 'common', 700)
+		await handleBuyCaseCommand(context, 'common', 1000)
 	} else if (message === '/купить кейс серебряный') {
-		await handleBuyCaseCommand(context, 'silver', 2000)
+		await handleBuyCaseCommand(context, 'silver', 4000)
 	} else if (message === '/купить кейс золотой') {
-		await handleBuyCaseCommand(context, 'gold', 4000)
+		await handleBuyCaseCommand(context, 'gold', 6000)
 	} else if (message === '/купить кейс платиновый') {
-		await handleBuyCaseCommand(context, 'platinum', 8000)
+		await handleBuyCaseCommand(context, 'platinum', 10000)
 	} else if (message === '/купить кейс waynecase') {
-		await handleBuyCaseCommand(context, 'wayne', 10000)
+		await handleBuyCaseCommand(context, 'wayne', 20000)
 	} else if (message === '/кейсы') {
 		const userCases = await getUserCases(userId)
 
@@ -5578,7 +5578,7 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.1.4`)
+		await context.send(`1.1.6`)
 	} else if (message.startsWith('/кейсы награды')) {
 		await context.send(
 			`${await getUserMention(
