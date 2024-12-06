@@ -13,7 +13,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_API_KEY)
 
 const vk = new VK({
 	token:
-		'vk1.a.602MQ_cJzBYb8CqLTO2amczP1ffK7RqpFKUWswatVLAnc0MrwpePuCbYAffW3Bhlg35mtcgG3pl4UdqG8AHG_6G_mg-ku2nmrkRGmIkGU6VBu7PHVFAkbplwlmE6pN-Bp8kBjvqdsb4eq4daz8h030w2JNTOe8L78lw_1N8pnCxV9vybm7n_ldx2mD3b2-TzZQrxHAf6L2htnqJxFtzzEg',
+		'vk1.a.Q9NkX2X7k4yvab34BKje68dL3oPj4PJASDuRlG6i2zmxz_QAyM3HK8D7vAM13nXeqyiInnEeC-RhjrM8-2S2KhiJ30WcnTKBoV928ugwl4VodYBiKChgq9UDwBULA6GsQ-cuPnzT8WYuy9AhaMnLtvXo0sUvjUkrsUeXLQa5BbB5nx1DyP4nJplvlQTx9OM1Ov2xn5VKxQ5o1_b1uGbJ4g',
 })
 
 const token = '7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA'
@@ -122,7 +122,7 @@ bot.command('delpromo', ctx => {
 bot.command('usepromo', async ctx => {
 	const args = ctx.message.text.split(' ').slice(1)
 	if (args.length < 1) {
-		return ctx.reply('Используйте: /usepromo [название]')
+		return ctx.reply('/usepromo название')
 	}
 
 	const promoName = args[0]
@@ -177,7 +177,7 @@ bot.command('usepromo', async ctx => {
 	usedPromoCodes[ctx.from.id][promoName] = true
 
 	return ctx.reply(
-		`Промокод ${promoName} использован. Вам начислено ${promoCodestg[promoName].amount} score.` // Исправлено на promoCodestg
+		`Промокод ${promoName} использован. Вам начислено ${promoCodestg[promoName].amount} WCoin.` // Исправлено на promoCodestg
 	)
 })
 
