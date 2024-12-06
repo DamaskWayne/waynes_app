@@ -13,7 +13,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_API_KEY)
 
 const vk = new VK({
 	token:
-		'vk1.a.Q9NkX2X7k4yvab34BKje68dL3oPj4PJASDuRlG6i2zmxz_QAyM3HK8D7vAM13nXeqyiInnEeC-RhjrM8-2S2KhiJ30WcnTKBoV928ugwl4VodYBiKChgq9UDwBULA6GsQ-cuPnzT8WYuy9AhaMnLtvXo0sUvjUkrsUeXLQa5BbB5nx1DyP4nJplvlQTx9OM1Ov2xn5VKxQ5o1_b1uGbJ4g',
+		'vk1.a.602MQ_cJzBYb8CqLTO2amczP1ffK7RqpFKUWswatVLAnc0MrwpePuCbYAffW3Bhlg35mtcgG3pl4UdqG8AHG_6G_mg-ku2nmrkRGmIkGU6VBu7PHVFAkbplwlmE6pN-Bp8kBjvqdsb4eq4daz8h030w2JNTOe8L78lw_1N8pnCxV9vybm7n_ldx2mD3b2-TzZQrxHAf6L2htnqJxFtzzEg',
 })
 
 const token = '7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA'
@@ -22,7 +22,7 @@ const bot = new Telegraf(token)
 
 bot.command('start', ctx => {
 	ctx.reply(
-		'Hello! Press to start the app\n\nВпервые здесь можно обменивать платные подписки на WCoin!🎁',
+		'Hello! Привет! 👋\n\nВпервые здесь можно получить Telegram Premium, Яндекс Плюс и др. подписки за WCoin! 🎁\n\n📖 Наш официальный канал: https://t.me/waynes_premium\n\n💬 Наш чат: https://t.me/+THCVJSKfbjY2MTgy\n\n',
 		Markup.inlineKeyboard([
 			Markup.button.webApp('Waynes App', `${webAppUrl}?ref=${ctx.payload}`),
 		])
@@ -32,11 +32,167 @@ bot.command('start', ctx => {
 bot.command('help', async ctx => {
 	const telegramId = ctx.from.id // ID Telegram пользователя
 	await ctx.reply(
-		`Ваш ID Telegram: ${telegramId}\n\nИспользуйте команду /auth чтобы перевести WCoin в вк бота.\n/start открыть веб-приложение.`
+		`👤 Ваш ID Telegram: ${telegramId}\n\n🎁 Используйте /usepromo промокод\n\n/start открыть веб-приложение.`
 	)
 })
 
-bot.command('gfhrthrthdgauth', async (ctx) => {
+const promoCodestg = {} // Хранение промокодов в оперативной памяти
+const usedPromoCodes = {} // Хранение использованных промокодов для пользователей
+
+// Проверка прав на использование команд
+const checkAdmin = ctx => {
+	return ctx.from.id === 950607972
+}
+
+// Команда /creatpromo [название] [сумма]
+bot.command('creatpromo', ctx => {
+	if (!checkAdmin(ctx)) {
+		return ctx.reply('У вас нет прав на использование этой команды.')
+	}
+
+	const args = ctx.message.text.split(' ').slice(1)
+	if (args.length < 2) {
+		return ctx.reply('/creatpromo [название] [сумма]')
+	}
+
+	const [promoName, amount] = args
+	if (isNaN(amount)) {
+		return ctx.reply('Сумма должна быть числом.')
+	}
+
+	promoCodestg[promoName] = {
+		amount: parseInt(amount),
+		maxActivations: null, // Без ограничения по активациям
+		activationsLeft: null,
+	}
+
+	return ctx.reply(`Промокод ${promoName} с суммой ${amount} создан.`)
+})
+
+// Команда /ccreatpromo [название] [сумма] [кол-во активаций]
+bot.command('ccreatpromo', ctx => {
+	if (!checkAdmin(ctx)) {
+		return ctx.reply('У вас нет прав на использование этой команды.')
+	}
+
+	const args = ctx.message.text.split(' ').slice(1)
+	if (args.length < 3) {
+		return ctx.reply(
+			'/ccreatpromo [название] [сумма] [кол-во активаций]'
+		)
+	}
+
+	const [promoName, amount, activations] = args
+	if (isNaN(amount) || isNaN(activations)) {
+		return ctx.reply('Сумма и количество активаций должны быть числами.')
+	}
+
+	promoCodestg[promoName] = {
+		amount: parseInt(amount),
+		maxActivations: parseInt(activations),
+		activationsLeft: parseInt(activations),
+	}
+
+	return ctx.reply(
+		`Промокод ${promoName} с суммой ${amount} и количеством активаций ${activations} создан.`
+	)
+})
+
+// Команда /delpromo [название]
+bot.command('delpromo', ctx => {
+	if (!checkAdmin(ctx)) {
+		return ctx.reply('У вас нет прав на использование этой команды.')
+	}
+
+	const args = ctx.message.text.split(' ').slice(1)
+	if (args.length < 1) {
+		return ctx.reply('/delpromo [название]')
+	}
+
+	const promoName = args[0]
+	if (!promoCodestg[promoName]) {
+		return ctx.reply('Такой промокод не найден.')
+	}
+
+	delete promoCodestg[promoName]
+	return ctx.reply(`Промокод ${promoName} удалён.`)
+})
+
+// Команда /usepromo [название]
+bot.command('usepromo', async ctx => {
+	const args = ctx.message.text.split(' ').slice(1)
+	if (args.length < 1) {
+		return ctx.reply('Используйте: /usepromo [название]')
+	}
+
+	const promoName = args[0]
+
+	// Проверка наличия промокода
+	if (!promoCodestg[promoName]) {
+		// Исправлено на promoCodestg
+		return ctx.reply('Такой промокод не существует.')
+	}
+
+	// Проверка активаций
+	if (promoCodestg[promoName].activationsLeft === 0) {
+		// Исправлено на promoCodestg
+		return ctx.reply('Активации данного промокода закончились.')
+	}
+
+	// Проверка, был ли уже использован промокод этим пользователем
+	if (usedPromoCodes[ctx.from.id] && usedPromoCodes[ctx.from.id][promoName]) {
+		return ctx.reply('Вы уже использовали этот промокод.')
+	}
+
+	// Получение текущего значения score
+	const { data: user, error: fetchError } = await supabase
+		.from('users')
+		.select('score')
+		.eq('telegram', ctx.from.id)
+		.single()
+
+	if (fetchError || !user) {
+		return ctx.reply('Ошибка при получении данных пользователя.')
+	}
+
+	const newScore = user.score + promoCodestg[promoName].amount
+
+	// Обновление значения score
+	const { error: updateError } = await supabase
+		.from('users')
+		.update({ score: newScore })
+		.eq('telegram', ctx.from.id)
+
+	if (updateError) {
+		return ctx.reply('Ошибка при начислении баланса.')
+	}
+
+	// Обновление оставшихся активаций
+	promoCodestg[promoName].activationsLeft -= 1 // Исправлено на promoCodestg
+
+	// Сохранение использования промокода
+	if (!usedPromoCodes[ctx.from.id]) {
+		usedPromoCodes[ctx.from.id] = {}
+	}
+	usedPromoCodes[ctx.from.id][promoName] = true
+
+	return ctx.reply(
+		`Промокод ${promoName} использован. Вам начислено ${promoCodestg[promoName].amount} score.` // Исправлено на promoCodestg
+	)
+})
+
+// Команда /ahelp (доступ только для админа)
+bot.command('ahelp', async ctx => {
+	if (!checkAdmin(ctx)) {
+		return ctx.reply('У вас нет прав на использование этой команды.')
+	}
+
+	await ctx.reply(
+		`/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]`
+	)
+})
+
+bot.command('auth', async (ctx) => {
     // Получаем userId из контекста
     const userId = ctx.from.id; // Используем ctx.from.id вместо ctx.senderId
 
@@ -1334,11 +1490,11 @@ async function sendCaseList(context) {
     "купить кейс [название]"
     
     Доступные кейсы и их стоимость:
-    📦 Обычный кейс: 1000 WCoin
-    📦 Серебряный кейс: 4000 WCoin
-    🎁 Золотой кейс: 6000 WCoin
-    🎁 Платиновый кейс: 10000 WCoin
-    💼 WayneCase: 20000 WCoin`)
+    📦 Обычный кейс: 700 WCoin
+    📦 Серебряный кейс: 3000 WCoin
+    🎁 Золотой кейс: 4000 WCoin
+    🎁 Платиновый кейс: 8000 WCoin
+    💼 WayneCase: 10000 WCoin`)
 }
 
 async function getUserCases(vk_id) {
@@ -5473,15 +5629,15 @@ vk.updates.on('message_new', async context => {
 	if (message === '/купить кейс') {
 		await sendCaseList(context)
 	} else if (message === '/купить кейс обычный') {
-		await handleBuyCaseCommand(context, 'common', 1000)
+		await handleBuyCaseCommand(context, 'common', 700)
 	} else if (message === '/купить кейс серебряный') {
-		await handleBuyCaseCommand(context, 'silver', 4000)
+		await handleBuyCaseCommand(context, 'silver', 2000)
 	} else if (message === '/купить кейс золотой') {
-		await handleBuyCaseCommand(context, 'gold', 6000)
+		await handleBuyCaseCommand(context, 'gold', 4000)
 	} else if (message === '/купить кейс платиновый') {
-		await handleBuyCaseCommand(context, 'platinum', 10000)
+		await handleBuyCaseCommand(context, 'platinum', 8000)
 	} else if (message === '/купить кейс waynecase') {
-		await handleBuyCaseCommand(context, 'wayne', 20000)
+		await handleBuyCaseCommand(context, 'wayne', 10000)
 	} else if (message === '/кейсы') {
 		const userCases = await getUserCases(userId)
 
@@ -5578,7 +5734,7 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.1.6`)
+		await context.send(`1.1.4`)
 	} else if (message.startsWith('/кейсы награды')) {
 		await context.send(
 			`${await getUserMention(
