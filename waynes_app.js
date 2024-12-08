@@ -122,7 +122,7 @@ bot.command('delpromo', ctx => {
 bot.command('usepromo', async ctx => {
 	const args = ctx.message.text.split(' ').slice(1)
 	if (args.length < 1) {
-		return ctx.reply('/usepromo название')
+		return ctx.reply('Используйте: /usepromo [название]')
 	}
 
 	const promoName = args[0]
@@ -177,7 +177,7 @@ bot.command('usepromo', async ctx => {
 	usedPromoCodes[ctx.from.id][promoName] = true
 
 	return ctx.reply(
-		`Промокод ${promoName} использован. Вам начислено ${promoCodestg[promoName].amount} WCoin.` // Исправлено на promoCodestg
+		`Промокод ${promoName} использован. Вам начислено ${promoCodestg[promoName].amount} score.` // Исправлено на promoCodestg
 	)
 })
 
@@ -721,6 +721,8 @@ const caseRewards = {
 			{ type: 'wcoin', amount: 450, dropChance: 0.8 },
 			{ type: 'wcoin', amount: 550, dropChance: 0.7 },
 			{ type: 'wcoin', amount: 700, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 800, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 900, dropChance: 0.7 },
 			{ type: 'item', name: '60.000$', dropChance: 0.8 },
 			{ type: 'item', name: '80.000$', dropChance: 0.4 },
 			{ type: 'item', name: '110.000$', dropChance: 0.2 },
@@ -734,12 +736,14 @@ const caseRewards = {
 			{ type: 'wcoin', amount: 500, dropChance: 0.7 },
 			{ type: 'wcoin', amount: 750, dropChance: 0.7 },
 			{ type: 'wcoin', amount: 800, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 900, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 1000, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 1100, dropChance: 0.7 },
 			{ type: 'item', name: '130.000$', dropChance: 0.4 },
 			{ type: 'item', name: '150.000$', dropChance: 0.3 },
 			{ type: 'item', name: '190.000$', dropChance: 0.2 },
 			{ type: 'item', name: 'Мишка на спину', dropChance: 0.05 },
 			{ type: 'item', name: 'Конфета на спину', dropChance: 0.05 },
-			{ type: 'item', name: 'Подарок на спину', dropChance: 0.05 },
 		],
 	},
 	platinum: {
@@ -747,13 +751,16 @@ const caseRewards = {
 			{ type: 'wcoin', amount: 1700, dropChance: 0.8 },
 			{ type: 'wcoin', amount: 1900, dropChance: 0.7 },
 			{ type: 'wcoin', amount: 2200, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 2300, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 2400, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 2500, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 2600, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 2700, dropChance: 0.7 },
 			{ type: 'item', name: '200.000$', dropChance: 0.4 },
 			{ type: 'item', name: '300.000$', dropChance: 0.3 },
 			{ type: 'item', name: '400.000$', dropChance: 0.2 },
 			{ type: 'item', name: 'Фредди', dropChance: 0.05 },
 			{ type: 'item', name: 'Айсмен', dropChance: 0.05 },
-			{ type: 'item', name: 'Арабский Шейх', dropChance: 0.05 },
-			{ type: 'item', name: 'Бустер', dropChance: 0.05 },
 		],
 	},
 	wayne: {
@@ -761,12 +768,16 @@ const caseRewards = {
 			{ type: 'wcoin', amount: 2500, dropChance: 0.8 },
 			{ type: 'wcoin', amount: 2900, dropChance: 0.7 },
 			{ type: 'wcoin', amount: 3200, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 3300, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 3400, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 4000, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 5000, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 6000, dropChance: 0.7 },
+			{ type: 'wcoin', amount: 7000, dropChance: 0.7 },
 			{ type: 'item', name: '700.000$', dropChance: 0.5 },
 			{ type: 'item', name: '820.000$', dropChance: 0.4 },
 			{ type: 'item', name: '900.000$', dropChance: 0.3 },
 			{ type: 'item', name: 'Дрейк', dropChance: 0.05 },
-			{ type: 'item', name: 'Литвин', dropChance: 0.05 },
-			{ type: 'item', name: 'Илон Маск', dropChance: 0.05 },
 		],
 	},
 }
@@ -1490,11 +1501,11 @@ async function sendCaseList(context) {
     "купить кейс [название]"
     
     Доступные кейсы и их стоимость:
-    📦 Обычный кейс: 700 WCoin
-    📦 Серебряный кейс: 3000 WCoin
-    🎁 Золотой кейс: 4000 WCoin
-    🎁 Платиновый кейс: 8000 WCoin
-    💼 WayneCase: 10000 WCoin`)
+    📦 Обычный кейс: 1000 WCoin
+    📦 Серебряный кейс: 4000 WCoin
+    🎁 Золотой кейс: 6000 WCoin
+    🎁 Платиновый кейс: 10000 WCoin
+    💼 WayneCase: 20000 WCoin`)
 }
 
 async function getUserCases(vk_id) {
@@ -5629,15 +5640,15 @@ vk.updates.on('message_new', async context => {
 	if (message === '/купить кейс') {
 		await sendCaseList(context)
 	} else if (message === '/купить кейс обычный') {
-		await handleBuyCaseCommand(context, 'common', 700)
+		await handleBuyCaseCommand(context, 'common', 1000)
 	} else if (message === '/купить кейс серебряный') {
-		await handleBuyCaseCommand(context, 'silver', 2000)
+		await handleBuyCaseCommand(context, 'silver', 4000)
 	} else if (message === '/купить кейс золотой') {
-		await handleBuyCaseCommand(context, 'gold', 4000)
+		await handleBuyCaseCommand(context, 'gold', 8000)
 	} else if (message === '/купить кейс платиновый') {
-		await handleBuyCaseCommand(context, 'platinum', 8000)
+		await handleBuyCaseCommand(context, 'platinum', 10000)
 	} else if (message === '/купить кейс waynecase') {
-		await handleBuyCaseCommand(context, 'wayne', 10000)
+		await handleBuyCaseCommand(context, 'wayne', 20000)
 	} else if (message === '/кейсы') {
 		const userCases = await getUserCases(userId)
 
@@ -5734,7 +5745,7 @@ vk.updates.on('message_new', async context => {
 			)}, ✂ для открытия кейса используйте команду: открыть кейс [название с маленькой буквы]`
 		)
 	} else if (message.startsWith('/-v')) {
-		await context.send(`1.1.4`)
+		await context.send(`1.1.6`)
 	} else if (message.startsWith('/кейсы награды')) {
 		await context.send(
 			`${await getUserMention(
