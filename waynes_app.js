@@ -51,6 +51,69 @@ const checkAdmin = ctx => {
 	return ctx.from.id === 950607972
 }
 
+bot.hears(/^\/рассылка(?:\s|$)/, async ctx => {
+	// Проверка прав доступа
+	if (!checkAdmin(ctx)) {
+		return ctx.reply('У вас нет прав на использование этой команды.')
+	}
+
+	// Получаем текст рассылки
+	const messageText = ctx.message.text.split(' ').slice(1).join(' ')
+	if (!messageText) {
+		return ctx.reply(
+			'❌ Введите текст для рассылки. Пример:\n/рассылка Привет всем!'
+		)
+	}
+
+	try {
+		// Получаем список всех пользователей из Supabase
+		const { data: users, error } = await supabase
+			.from('users')
+			.select('telegram') // Берём только ID Telegram
+			.not('telegram', 'is', null) // Исключаем пользователей без Telegram ID
+
+		if (error) {
+			console.error('Ошибка при получении пользователей из Supabase:', error)
+			return ctx.reply('❌ Ошибка при получении данных пользователей.')
+		}
+
+		// Проверка количества пользователей
+		if (!users || users.length === 0) {
+			return ctx.reply('❌ Нет пользователей для рассылки.')
+		}
+
+		// Разделение пользователей на пакеты по 30 человек
+		const chunkSize = 30
+		let totalSent = 0
+
+		for (let i = 0; i < users.length; i += chunkSize) {
+			const chunk = users.slice(i, i + chunkSize)
+
+			// Рассылка сообщений по текущему пакету
+			await Promise.all(
+				chunk.map(async user => {
+					const telegramId = user.telegram
+					try {
+						await bot.telegram.sendMessage(telegramId, messageText)
+						totalSent++
+					} catch (err) {
+						console.error(`Ошибка отправки пользователю ${telegramId}:`, err)
+					}
+				})
+			)
+
+			// Пауза между пакетами (2 секунды)
+			await new Promise(resolve => setTimeout(resolve, 2000))
+		}
+
+		// Подтверждение
+		ctx.reply(`✅ Сообщение успешно разослано ${totalSent} пользователям.`)
+	} catch (err) {
+		console.error('Ошибка рассылки:', err)
+		ctx.reply('❌ Произошла ошибка при рассылке сообщений.')
+	}
+})
+
 // Команда /creatpromo [название] [сумма]
 bot.command('creatpromo', ctx => {
 	if (!checkAdmin(ctx)) {
@@ -195,7 +258,7 @@ bot.command('ahelp', async ctx => {
 	}
 
 	await ctx.reply(
-		`/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]`
+		`/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]\n/рассылка [текст]`
 	)
 })
 
@@ -7256,4 +7319,4 @@ setInterval(async () => {
 	}
 }, 60000) // Проверяем каждую минуту
 
-console.log('Скрипт запущен 1.1.9')
+console.log('Скрипт запущен 1.2.0')
