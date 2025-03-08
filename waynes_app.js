@@ -16,7 +16,7 @@ const vk = new VK({
 		'vk1.a.Q9NkX2X7k4yvab34BKje68dL3oPj4PJASDuRlG6i2zmxz_QAyM3HK8D7vAM13nXeqyiInnEeC-RhjrM8-2S2KhiJ30WcnTKBoV928ugwl4VodYBiKChgq9UDwBULA6GsQ-cuPnzT8WYuy9AhaMnLtvXo0sUvjUkrsUeXLQa5BbB5nx1DyP4nJplvlQTx9OM1Ov2xn5VKxQ5o1_b1uGbJ4g',
 })
 
-const token = '7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA'
+const token = '6093062074:AAG4fXlf8-ljpTmn0WMDMz0SFU530KQFLpQ'
 const webAppUrl = 'https://waynes-app.web.app'
 const bot = new Telegraf(token)
 
@@ -50,6 +50,45 @@ const usedPromoCodes = {} // Хранение использованных пр�
 const checkAdmin = ctx => {
 	return ctx.from.id === 950607972
 }
+
+bot.command('addhistory', async ctx => {
+	if (!checkAdmin(ctx)) {
+		return ctx.reply('❌ У вас нет прав на эту команду')
+	}
+
+	const text = ctx.message.text.replace('/addhistory', '').trim()
+
+	if (!text) {
+		return ctx.reply('❌ Укажите текст для истории: /addhistory [текст]')
+	}
+
+	try {
+		// Получаем последнюю добавленную историю (предполагаем что URL уже добавлен)
+		const { data: lastStory } = await supabase
+			.from('stories')
+			.select('image_url')
+			.order('created_at', { ascending: false })
+			.limit(1)
+			.single()
+
+		if (!lastStory?.image_url) {
+			return ctx.reply('❌ Сначала добавьте изображение в Supabase')
+		}
+
+		// Обновляем текст последней истории
+		const { error } = await supabase
+			.from('stories')
+			.update({ text_content: text })
+			.eq('image_url', lastStory.image_url)
+
+		if (error) throw error
+
+		ctx.reply('✅ История успешно обновлена!')
+	} catch (e) {
+		console.error(e)
+		ctx.reply('❌ Ошибка при обновлении истории')
+	}
+})
 
 bot.hears(/^\/рассылка(?:\s|$)/, async ctx => {
 	// Проверка прав доступа
@@ -262,7 +301,7 @@ bot.command('ahelp', async ctx => {
 	)
 })
 
-bot.command('auth', async (ctx) => {
+bot.command('lllghauth', async (ctx) => {
     // Получаем userId из контекста
     const userId = ctx.from.id; // Используем ctx.from.id вместо ctx.senderId
 
@@ -359,15 +398,15 @@ async function handleAuthCommand(context, message) {
 	// Проверка на количество аргументов
 	if (args.length < 2) {
 		return await context.send(
-			'Используйте команду /auth login [ID Telegram] для привязки аккаунта или /auth [кол-во WCoin] для перевода WCoin в веб-приложение.\n\nID вашего Telegram аккаунта можно узнать в Телеграм боте по команде /help.'
+			'Используйте команду /auth login [ID Telegram] для привязки аккаунта, /auth [кол-во WCoin] для перевода WCoin или /auth предмет [название предмета] для перевода предмета в веб-приложение.\n\nID вашего Telegram аккаунта можно узнать в Телеграм боте по команде /help.'
 		)
 	}
 
 	const command = args[1]
-	const input = args[2] // Берем второй аргумент для ID Telegram или суммы WCoin
+	const input = args[2] // Берем второй аргумент для ID Telegram, суммы WCoin или названия предмета
 
 	if (command === 'login') {
-		// Проверка: попытка найти введенный ID в базе как Telegram ID
+		// Логика привязки аккаунта (остается без изменений)
 		const telegramID = parseInt(input, 10)
 		if (!isNaN(telegramID)) {
 			// Проверяем, привязан ли аккаунт VK к Telegram
@@ -418,22 +457,15 @@ async function handleAuthCommand(context, message) {
 			}
 
 			return await context.send(
-				'✅ Ваш аккаунт успешно привязан! Теперь вы можете перевести WCoin с помощью команды /auth [кол-во WCoin].'
+				'✅ Ваш аккаунт успешно привязан! Теперь вы можете перевести WCoin или предметы с помощью команд /auth [кол-во WCoin] или /auth предмет [название предмета].'
 			)
 		} else {
 			return await context.send('⚠ Указан некорректный ID Telegram.')
 		}
-	}
-
-	// Проверка как сумму WCoin
-	const wcoinAmount = parseInt(command, 10)
-	if (!isNaN(wcoinAmount) && wcoinAmount > 0) {
-		const user = await getUser(userId)
-		if (!user || user.wcoin < wcoinAmount) {
-			return await context.send(
-				'⚠ Недостаточно WCoin или вы не зарегистрированы /reg.'
-			)
-		}
+	} else if (command === 'предмет') {
+		// Логика перевода предмета
+		const itemName = args.slice(2).join(' ') // Название предмета
+		const transferQuantity = 10 // Количество предметов для перевода
 
 		// Проверка привязки аккаунта в Supabase
 		const { data: foundUser, error } = await supabase
@@ -448,38 +480,170 @@ async function handleAuthCommand(context, message) {
 			)
 		}
 
-		// Перевод WCoin
-		const newScore = foundUser.score + wcoinAmount
-
-		const { error: updateError } = await supabase
-			.from('users')
-			.update({ score: newScore })
-			.eq('vk', userId)
-
-		if (updateError) {
-			return await context.send(
-				'⚠ Ошибка при обновлении баланса. Повторите попытку позже.'
-			)
-		}
-
-		await sendTelegramNotification(foundUser.telegram, `✅ Ваш счет пополнен на ${wcoinAmount} WCoin из VK.`);
-
-		db.run(
-			'UPDATE users SET wcoin = wcoin - ? WHERE vk_id = ?',
-			[wcoinAmount, userId],
-			err => {
+		// Проверка наличия предмета у пользователя в VK
+		db.get(
+			'SELECT quantity FROM user_items WHERE user_id = ? AND item_name = ?',
+			[userId, itemName],
+			async (err, row) => {
 				if (err) {
-					console.error('Ошибка обновления WCoin:', err)
-					return context.send('⚠ Ошибка при обновлении WCoin.')
-				} else {
-					context.send(
-						`✅ Успешно переведено ${wcoinAmount} WCoin на счет в веб-приложение.`
+					console.error('Ошибка при проверке предмета:', err)
+					return await context.send('⚠ Ошибка при проверке предмета.')
+				}
+
+				if (!row || row.quantity < transferQuantity) {
+					return await context.send(
+						`⚠ У вас недостаточно предметов "${itemName}" для перевода. Необходимо 10шт.`
 					)
 				}
+
+				// Проверка баланса WCoin для комиссии
+				const user = await getUser(userId)
+				if (!user || user.wcoin < 100) {
+					return await context.send(
+						'⚠ Недостаточно WCoin для оплаты комиссии за перевод. Необходимо 100WCoin.'
+					)
+				}
+
+				// Снимаем комиссию за перевод
+				db.run(
+					'UPDATE users SET wcoin = wcoin - ? WHERE vk_id = ?',
+					[100, userId],
+					async err => {
+						if (err) {
+							console.error('Ошибка при списании комиссии:', err)
+							return await context.send('⚠ Ошибка при списании комиссии.')
+						}
+
+						// Снимаем предметы с баланса пользователя в VK
+						db.run(
+							'UPDATE user_items SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?',
+							[transferQuantity, userId, itemName],
+							async err => {
+								if (err) {
+									console.error('Ошибка при списании предметов:', err)
+									return await context.send('⚠ Ошибка при списании предметов.')
+								}
+
+								// Добавляем предметы в базу данных Supabase
+								const { data: existingItem, error: itemError } = await supabase
+									.from('items')
+									.select('*')
+									.eq('telegram', foundUser.telegram)
+									.eq('nickname', user?.username)
+									.eq('item_name', itemName)
+									.single()
+
+								if (itemError || !existingItem) {
+									// Если предмета нет, создаем новую запись
+									await supabase.from('items').insert([
+										{
+											telegram: foundUser.telegram,
+											nickname: user?.username,
+											item_name: itemName,
+											quantity: transferQuantity,
+										},
+									])
+								} else {
+									// Если предмет есть, обновляем количество
+									await supabase
+										.from('items')
+										.update({
+											quantity: existingItem.quantity + transferQuantity,
+										})
+										.eq('id', existingItem.id)
+								}
+
+								// Уведомление пользователя
+								await context.send(
+									`✅ Предмет "${itemName}" успешно переведен в веб-приложение. С вас списано 100 WCoin за перевод.`
+								)
+
+								// Уведомление в Telegram
+								await sendTelegramNotification(
+									foundUser.telegram,
+									`✅ Вам переведено ${transferQuantity} шт. предмета "${itemName}" из VK.`
+								)
+							}
+						)
+					}
+				)
 			}
 		)
 	} else {
-		await context.send('⚠ Указано некорректное количество WCoin для перевода.')
+		// Проверка как сумму WCoin
+		const wcoinAmount = parseInt(command, 10)
+		if (!isNaN(wcoinAmount) && wcoinAmount > 0) {
+			const user = await getUser(userId)
+			if (!user || user.wcoin < wcoinAmount) {
+				return await context.send(
+					'⚠ Недостаточно WCoin или вы не зарегистрированы /reg.'
+				)
+			}
+
+			// Проверка привязки аккаунта в Supabase
+			const { data: foundUser, error } = await supabase
+				.from('users')
+				.select('*')
+				.eq('vk', userId)
+				.single()
+
+			if (error || !foundUser || !foundUser.telegram) {
+				return await context.send(
+					'⚠ Сначала привяжите аккаунт с помощью /auth login [ID Telegram].'
+				)
+			}
+
+			// Перевод WCoin
+			const newScore = foundUser.score + wcoinAmount
+
+			const { error: updateError } = await supabase
+				.from('users')
+				.update({ score: newScore })
+				.eq('vk', userId)
+
+			if (updateError) {
+				return await context.send(
+					'⚠ Ошибка при обновлении баланса. Повторите попытку позже.'
+				)
+			}
+
+			// Логирование транзакции в таблицу transactions
+			await supabase.from('transactions').insert([
+				{
+					telegram: foundUser.telegram,
+					nickname: foundUser.nickname || 'Аноним',
+					type: 'VK', // Пополнение
+					amount: wcoinAmount,
+					description: `Перевод WCoin из VK в Telegram`,
+					balance_after: newScore,
+					date: new Date().toISOString(),
+				},
+			])
+
+			await sendTelegramNotification(
+				foundUser.telegram,
+				`✅ Ваш счет пополнен на ${wcoinAmount} WCoin из VK.`
+			)
+
+			db.run(
+				'UPDATE users SET wcoin = wcoin - ? WHERE vk_id = ?',
+				[wcoinAmount, userId],
+				err => {
+					if (err) {
+						console.error('Ошибка обновления WCoin:', err)
+						return context.send('⚠ Ошибка при обновлении WCoin.')
+					} else {
+						context.send(
+							`✅ Успешно переведено ${wcoinAmount} WCoin на счет в веб-приложение.`
+						)
+					}
+				}
+			)
+		} else {
+			await context.send(
+				'⚠ Указано некорректное количество WCoin для перевода.'
+			)
+		}
 	}
 }
 
