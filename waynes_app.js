@@ -16,7 +16,7 @@ const vk = new VK({
 		'vk1.a.Q9NkX2X7k4yvab34BKje68dL3oPj4PJASDuRlG6i2zmxz_QAyM3HK8D7vAM13nXeqyiInnEeC-RhjrM8-2S2KhiJ30WcnTKBoV928ugwl4VodYBiKChgq9UDwBULA6GsQ-cuPnzT8WYuy9AhaMnLtvXo0sUvjUkrsUeXLQa5BbB5nx1DyP4nJplvlQTx9OM1Ov2xn5VKxQ5o1_b1uGbJ4g',
 })
 
-const token = '6093062074:AAG4fXlf8-ljpTmn0WMDMz0SFU530KQFLpQ'
+const token = '7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA' // 7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA
 const webAppUrl = 'https://waynes-app.web.app'
 const bot = new Telegraf(token)
 
