@@ -16,8 +16,8 @@ const vk = new VK({
 		'vk1.a.Q9NkX2X7k4yvab34BKje68dL3oPj4PJASDuRlG6i2zmxz_QAyM3HK8D7vAM13nXeqyiInnEeC-RhjrM8-2S2KhiJ30WcnTKBoV928ugwl4VodYBiKChgq9UDwBULA6GsQ-cuPnzT8WYuy9AhaMnLtvXo0sUvjUkrsUeXLQa5BbB5nx1DyP4nJplvlQTx9OM1Ov2xn5VKxQ5o1_b1uGbJ4g',
 })
 
-const token = '7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA' // 7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA
-const webAppUrl = 'https://waynes-app.web.app'
+const token = '7511515205:AAGgkdZPNdssJ2XrZl65Rzp190uIr3NqRAA'
+const webAppUrl = 'https://waynes-app.web.app' // https://waynes-app.web.app
 const bot = new Telegraf(token)
 
 bot.command('start', ctx => {
@@ -49,6 +49,28 @@ const usedPromoCodes = {} // Хранение использованных пр�
 // Проверка прав на использование команд
 const checkAdmin = ctx => {
 	return ctx.from.id === 950607972
+}
+
+const checkModerator = async ctx => {
+	const userId = ctx.from.id
+
+	// Проверка на ваши личные права
+	if (userId === 950607972) {
+		return true
+	}
+
+	// Проверка наличия пользователя в таблице admins
+	const { data, error } = await supabase
+		.from('admins')
+		.select('*')
+		.eq('telegram', userId)
+
+	if (error) {
+		console.error('Ошибка при проверке прав администратора:', error)
+		return false
+	}
+
+	return data.length > 0 // Если пользователь найден в таблице admins, возвращаем true
 }
 
 bot.command('addhistory', async ctx => {
@@ -290,16 +312,559 @@ bot.command('usepromo', async ctx => {
 	)
 })
 
+// Получение ID пользователя из сообщения
+const getUserId = async (ctx, target) => {
+    if (ctx.message.reply_to_message) {
+        return ctx.message.reply_to_message.from.id; // ID из ответа на сообщение
+    } else if (target.startsWith('@')) {
+        const username = target.slice(1);
+        const user = await ctx.telegram.getChatMember(ctx.chat.id, username);
+        return user.user.id; // ID по username
+    } else {
+        return target; // ID напрямую
+    }
+};
+
+// Получение ника пользователя
+const getUsername = async (ctx, userId) => {
+    try {
+        const user = await ctx.telegram.getChatMember(ctx.chat.id, userId);
+        return user.user.username ? `@${user.user.username}` : 'без ника';
+    } catch (error) {
+        return 'без ника';
+    }
+};
+
 // Команда /ahelp (доступ только для админа)
 bot.command('ahelp', async ctx => {
-	if (!checkAdmin(ctx)) {
-		return ctx.reply('У вас нет прав на использование этой команды.')
-	}
+	if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
 
 	await ctx.reply(
-		`/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]\n/рассылка [текст]`
+		`Модераторские команды:\n/mute [id/ответ на сообщение] [мин] [причина]\n/unmute [id/ответ на сообщение]\n/mutelist\n/ban [id/ответ на сообщение] [дни] [причина]\n/unban [id/ответ на сообщение]\n/banlist\n/warn [id/ответ на сообщение] [причина]\n/unwarn [id/ответ на сообщение]\n/warnlist\n/check [id/ответ на сообщение]\n\nПрочее:\n/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]\n/рассылка [текст]`
 	)
 })
+
+bot.command('giveadm', async ctx => {
+	if (!checkAdmin(ctx)) {
+		return ctx.reply('❌ У вас нет прав на эту команду')
+	}
+
+	const userId = ctx.message.text.split(' ')[1]
+	if (!userId) {
+		return ctx.reply('❌ Укажите ID пользователя: /giveadm [id telegram]')
+	}
+
+	// Добавление пользователя в таблицу admins
+	const { data, error } = await supabase
+		.from('admins')
+		.insert([{ telegram: userId, username: ctx.from.username || 'Без ника' }])
+
+	if (error) {
+		return ctx.reply('❌ Ошибка при выдаче админки')
+	}
+
+	ctx.reply(`✅ Пользователь с ID ${userId} получил админку`)
+})
+
+bot.command('deladm', async (ctx) => {
+    if (!checkAdmin(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    const userId = ctx.message.text.split(' ')[1];
+    if (!userId) {
+        return ctx.reply('❌ Укажите ID пользователя: /deladm [id telegram]');
+    }
+
+    // Удаление пользователя из таблицы admins
+    const { data, error } = await supabase
+        .from('admins')
+        .delete()
+        .eq('telegram', userId);
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при снятии админки');
+    }
+
+    ctx.reply(`✅ Пользователь с ID ${userId} лишен админки`);
+});
+
+bot.command('mute', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    let target, minutes, reason;
+
+    // Если команда вызвана в ответ на сообщение
+    if (ctx.message.reply_to_message) {
+        target = ctx.message.reply_to_message.from.id; // ID пользователя из ответа
+        minutes = parseInt(args[0]);
+        reason = args.slice(1).join(' ');
+    } else {
+        // Если команда вызвана с указанием ID/ника
+        target = args[0];
+        minutes = parseInt(args[1]);
+        reason = args.slice(2).join(' ');
+    }
+
+    if (!target || !minutes || !reason) {
+        return ctx.reply('❌ Укажите все параметры: /mute [nickname/id/ответ на сообщение] [кол-во минут] [причина]');
+    }
+
+    const userId = await getUserId(ctx, target);
+    const username = await getUsername(ctx, userId);
+
+    // Ограничение прав пользователя (мут)
+    const untilDate = Math.floor(Date.now() / 1000) + minutes * 60;
+    await ctx.telegram.restrictChatMember(ctx.chat.id, userId, {
+        until_date: untilDate,
+        permissions: {
+            can_send_messages: false,
+            can_send_media_messages: false,
+            can_send_other_messages: false,
+            can_add_web_page_previews: false,
+        },
+    });
+
+    // Добавление мута в таблицу punishments
+    const muteEndTime = new Date(Date.now() + minutes * 60000).toISOString();
+    const { data, error } = await supabase
+        .from('punishments')
+        .insert([{ telegram: userId, nickname: username, type: 'mute', time: muteEndTime, reason: reason }]);
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при выдаче мута');
+    }
+
+    ctx.reply(`✅ Пользователь ${username} (ID: ${userId}) получил мут на ${minutes} минут по причине: ${reason}`);
+});
+
+// Команда /unmute [nickname/id/ответ на сообщение]
+bot.command('unmute', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    let target;
+
+    // Если команда вызвана в ответ на сообщение
+    if (ctx.message.reply_to_message) {
+        target = ctx.message.reply_to_message.from.id; // ID пользователя из ответа
+    } else {
+        // Если команда вызвана с указанием ID/ника
+        target = args[0];
+    }
+
+    if (!target) {
+        return ctx.reply('❌ Укажите пользователя: /unmute [nickname/id/ответ на сообщение]');
+    }
+
+    const userId = await getUserId(ctx, target);
+    const username = await getUsername(ctx, userId);
+
+    // Восстановление прав пользователя
+    await ctx.telegram.restrictChatMember(ctx.chat.id, userId, {
+        permissions: {
+            can_send_messages: true,
+            can_send_media_messages: true,
+            can_send_other_messages: true,
+            can_add_web_page_previews: true,
+        },
+    });
+
+    // Удаление мута из таблицы punishments
+    const { data, error } = await supabase
+        .from('punishments')
+        .delete()
+        .eq('telegram', userId)
+        .eq('type', 'mute')
+		.gt('time', new Date().toISOString());
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при снятии мута');
+    }
+
+    ctx.reply(`✅ Пользователю ${username} (ID: ${userId}) снят мут.`);
+});
+
+bot.command('mutelist', async (ctx) => { 
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    // Получение списка мутированных пользователей
+    const { data, error } = await supabase
+        .from('punishments')
+        .select('*')
+        .eq('type', 'mute');
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при получении списка пользователей, у которых есть мут.');
+    }
+
+    if (data.length === 0) {
+        return ctx.reply('✅ Нет пользователей, у которых есть мут.');
+    }
+
+    const muteList = [];
+    for (const mute of data) {
+        const timeLeft = Math.ceil((new Date(mute.time) - Date.now()) / 60000); // Осталось минут
+
+        // Если мут истек, пропускаем запись
+        if (timeLeft <= 0) {
+            continue;
+        }
+
+        // Получаем ник пользователя
+        const username = await getUsername(ctx, mute.telegram);
+
+        muteList.push(`ID: ${mute.telegram}, Ник: ${username}, Причина: ${mute.reason}, Осталось: ${timeLeft} минут`);
+    }
+
+    if (muteList.length === 0) {
+        return ctx.reply('✅ Нет пользователей, у которых есть мут.');
+    }
+
+    ctx.reply(`📋 Список пользователей, у которых есть мут:\n${muteList.join('\n')}`);
+});
+
+bot.command('warn', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    let target, reason;
+
+    // Если команда вызвана в ответ на сообщение
+    if (ctx.message.reply_to_message) {
+        target = ctx.message.reply_to_message.from.id; // ID пользователя из ответа
+        reason = args.join(' ');
+    } else {
+        // Если команда вызвана с указанием ID/ника
+        target = args[0];
+        reason = args.slice(1).join(' ');
+    }
+
+    if (!target || !reason) {
+        return ctx.reply('❌ Укажите все параметры: /warn [nickname/id/ответ на сообщение] [причина]');
+    }
+
+    const userId = await getUserId(ctx, target);
+    const username = await getUsername(ctx, userId);
+
+    // Добавление варна в таблицу punishments
+    const { data, error } = await supabase
+        .from('punishments')
+        .insert([{ telegram: userId, type: 'warn', reason: reason }]);
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при выдаче варна');
+    }
+
+    // Проверка количества варнов
+    const { data: warns, error: warnError } = await supabase
+        .from('punishments')
+        .select('*')
+        .eq('telegram', userId)
+        .eq('type', 'warn');
+
+    if (warnError) {
+        return ctx.reply('❌ Ошибка при проверке варнов');
+    }
+
+    if (warns.length >= 3) {
+        // Бан пользователя при 3 варнах
+        await supabase
+            .from('punishments')
+            .insert([{ telegram: userId, nickname: username, type: 'ban', reason: '3/3 варна' }]);
+
+        ctx.reply(`🚫 Пользователь ${username} (ID: ${userId}) получил бан за 3/3 варна`);
+    } else {
+        ctx.reply(`⚠ Пользователь ${username} (ID: ${userId}) получил варн. Текущее количество: ${warns.length}/3`);
+    }
+});
+
+bot.command('unwarn', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    let target;
+
+    // Если команда вызвана в ответ на сообщение
+    if (ctx.message.reply_to_message) {
+        target = ctx.message.reply_to_message.from.id; // ID пользователя из ответа
+    } else {
+        // Если команда вызвана с указанием ID/ника
+        target = args[0];
+    }
+
+    if (!target) {
+        return ctx.reply('❌ Укажите пользователя: /unwarn [nickname/id/ответ на сообщение]');
+    }
+
+    const userId = await getUserId(ctx, target);
+    const username = await getUsername(ctx, userId);
+
+    // Удаление последнего варна
+    const { data, error } = await supabase
+        .from('punishments')
+        .delete()
+        .eq('telegram', userId)
+        .eq('type', 'warn')
+        .order('id', { ascending: false })
+        .limit(1);
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при снятии варна');
+    }
+
+    ctx.reply(`✅ Пользователь ${username} (ID: ${userId}) лишен одного варна`);
+});
+
+bot.command('warnlist', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    // Получение списка пользователей с варнами
+    const { data, error } = await supabase
+        .from('punishments')
+        .select('*')
+        .eq('type', 'warn');
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при получении списка варнов');
+    }
+
+    if (data.length === 0) {
+        return ctx.reply('✅ Нет пользователей с варнами');
+    }
+
+    const warnList = [];
+    for (const warn of data) {
+        // Получаем ник пользователя
+        const username = await getUsername(ctx, warn.telegram);
+
+        warnList.push(`ID: ${warn.telegram}, Ник: ${username}, Причина: ${warn.reason}`);
+    }
+
+    ctx.reply(`📋 Список пользователей с варнами:\n${warnList.join('\n')}`);
+});
+
+bot.command('ban', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    let target, days, reason;
+
+    // Если команда вызвана в ответ на сообщение
+    if (ctx.message.reply_to_message) {
+        target = ctx.message.reply_to_message.from.id; // ID пользователя из ответа
+        days = parseInt(args[0]);
+        reason = args.slice(1).join(' ');
+    } else {
+        // Если команда вызвана с указанием ID/ника
+        target = args[0];
+        days = parseInt(args[1]);
+        reason = args.slice(2).join(' ');
+    }
+
+    if (!target || !days || !reason) {
+        return ctx.reply('❌ Укажите все параметры: /ban [nickname/id/ответ на сообщение] [дней] [причина]');
+    }
+
+    const userId = await getUserId(ctx, target);
+    const username = await getUsername(ctx, userId);
+
+    // Бан пользователя
+    const untilDate = Math.floor(Date.now() / 1000) + days * 86400;
+    await ctx.telegram.banChatMember(ctx.chat.id, userId, untilDate);
+
+    // Добавление бана в таблицу punishments
+    const banEndTime = new Date(Date.now() + days * 86400000).toISOString();
+    const { data, error } = await supabase
+        .from('punishments')
+        .insert([{ telegram: userId, nickname: username, type: 'ban', time: banEndTime, reason: reason }]);
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при выдаче бана');
+    }
+
+    ctx.reply(`🚫 Пользователь ${username} (ID: ${userId}) забанен на ${days} дней по причине: ${reason}`);
+});
+
+// Команда /unban [nickname/id/ответ на сообщение]
+bot.command('unban', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    let target;
+
+    // Если команда вызвана в ответ на сообщение
+    if (ctx.message.reply_to_message) {
+        target = ctx.message.reply_to_message.from.id; // ID пользователя из ответа
+    } else {
+        // Если команда вызвана с указанием ID/ника
+        target = args[0];
+    }
+
+    if (!target) {
+        return ctx.reply('❌ Укажите пользователя: /unban [nickname/id/ответ на сообщение]');
+    }
+
+    const userId = await getUserId(ctx, target);
+    const username = await getUsername(ctx, userId);
+
+    // Разбан пользователя
+    await ctx.telegram.unbanChatMember(ctx.chat.id, userId);
+
+    // Удаление бана из таблицы punishments
+    const { data, error } = await supabase
+        .from('punishments')
+        .delete()
+        .eq('telegram', userId)
+        .eq('type', 'ban')
+		.gt('time', new Date().toISOString());
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при снятии бана');
+    }
+
+    ctx.reply(`✅ Пользователь ${username} (ID: ${userId}) разбанен`);
+});
+
+bot.command('banlist', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    // Получение списка забаненных пользователей
+    const { data, error } = await supabase
+        .from('punishments')
+        .select('*')
+        .eq('type', 'ban');
+
+    if (error) {
+        return ctx.reply('❌ Ошибка при получении списка банов');
+    }
+
+    if (data.length === 0) {
+        return ctx.reply('✅ Нет забаненных пользователей');
+    }
+
+    const banList = [];
+    for (const ban of data) {
+        const timeLeft = Math.ceil((new Date(ban.time) - Date.now()) / 86400000); // Осталось дней
+
+        // Если бан истек, пропускаем запись
+        if (timeLeft <= 0) {
+            continue;
+        }
+
+        // Получаем ник пользователя
+        const username = await getUsername(ctx, ban.telegram);
+
+        banList.push(`ID: ${ban.telegram}, Ник: ${username}, Причина: ${ban.reason}, Осталось: ${timeLeft} дней`);
+    }
+
+    if (banList.length === 0) {
+        return ctx.reply('✅ Нет активных забаненных пользователей.');
+    }
+
+    ctx.reply(`📋 Список забаненных пользователей:\n${banList.join('\n')}`);
+});
+
+bot.command('check', async (ctx) => {
+    if (!await checkModerator(ctx)) {
+        return ctx.reply('❌ У вас нет прав на эту команду');
+    }
+
+    const args = ctx.message.text.split(' ').slice(1);
+    let target;
+
+    // Если команда вызвана в ответ на сообщение
+    if (ctx.message.reply_to_message) {
+        target = ctx.message.reply_to_message.from.id; // ID пользователя из ответа
+    } else {
+        // Если команда вызвана с указанием ID/ника
+        target = args[0];
+    }
+
+    if (!target) {
+        return ctx.reply('❌ Укажите пользователя: /check [nickname/id/ответ на сообщение]');
+    }
+
+    try {
+        const userId = await getUserId(ctx, target);
+        const username = await getUsername(ctx, userId);
+
+        // Получение всех наказаний пользователя
+        const { data: punishments, error } = await supabase
+            .from('punishments')
+            .select('*')
+            .eq('telegram', userId);
+
+        if (error) {
+            return ctx.reply('❌ Ошибка при получении информации о наказаниях');
+        }
+
+        // Формирование информации о пользователе
+        let userInfo = `ID: ${userId}\n`;
+        userInfo += `NickName: ${username}\n`;
+
+        // Проверка активных наказаний
+        const activePunishments = punishments.filter(punishment => {
+            if (punishment.type === 'ban' || punishment.type === 'mute') {
+                const endTime = new Date(punishment.time);
+                return endTime > new Date(); // Наказание еще активно
+            }
+            return false;
+        });
+
+        if (activePunishments.length > 0) {
+            userInfo += 'Активное наказание:\n';
+            activePunishments.forEach(punishment => {
+                const endTime = new Date(punishment.time);
+                const timeLeft = Math.ceil((endTime - new Date()) / (1000 * 60 * 60 * 24)); // Осталось дней
+                userInfo += `- ${punishment.type === 'ban' ? 'Бан' : 'Мут'}, ${timeLeft} ${punishment.type === 'ban' ? 'дней' : 'минут'}, Причина: ${punishment.reason}\n`;
+            });
+        } else {
+            userInfo += 'Активное наказание: Нет\n';
+        }
+
+        // История наказаний
+        if (punishments.length > 0) {
+            userInfo += 'История наказаний:\n';
+            punishments.forEach(punishment => {
+                const endTime = new Date(punishment.time);
+                const formattedDate = endTime.toLocaleDateString('ru-RU', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                });
+                userInfo += `- ${punishment.type === 'ban' ? 'Бан' : punishment.type === 'mute' ? 'Мут' : 'Варн'}, ${punishment.type === 'ban' ? 'дней' : punishment.type === 'mute' ? 'минут' : ''}, Причина: ${punishment.reason}, Дата снятия: ${formattedDate}\n`;
+            });
+        } else {
+            userInfo += 'История наказаний: Нет\n';
+        }
+
+        ctx.reply(userInfo);
+    } catch (error) {
+        ctx.reply(`❌ Ошибка: ${error.message}`);
+    }
+});
 
 bot.command('lllghauth', async (ctx) => {
     // Получаем userId из контекста
