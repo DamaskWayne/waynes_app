@@ -820,9 +820,18 @@ bot.command('check', async (ctx) => {
             return ctx.reply('❌ Ошибка при получении информации о наказаниях');
         }
 
+        // Проверка участия в канале и чате
+        const channelId = '@waynes_premium'; // без ID канала
+        const chatId = '-1001913079597'; // ID чата 
+
+        const isInChannel = await checkUserMembership(ctx, userId, channelId);
+        const isInChat = await checkUserMembership(ctx, userId, chatId);
+
         // Формирование информации о пользователе
         let userInfo = `ID: ${userId}\n`;
         userInfo += `NickName: ${username}\n`;
+        userInfo += `Состоит в ТГ канале: ${isInChannel ? 'Да' : 'Нет'}\n`;
+        userInfo += `Состоит в чате: ${isInChat ? 'Да' : 'Нет'}\n`;
 
         // Проверка активных наказаний
         const activePunishments = punishments.filter(punishment => {
@@ -865,6 +874,19 @@ bot.command('check', async (ctx) => {
         ctx.reply(`❌ Ошибка: ${error.message}`);
     }
 });
+
+// Функция для проверки участия пользователя в канале или чате
+async function checkUserMembership(ctx, userId, chatId) {
+    try {
+        const chatMember = await ctx.telegram.getChatMember(chatId, userId);
+        const isMember = ['member', 'administrator', 'creator'].includes(chatMember.status);
+        
+        return isMember;
+    } catch (error) {
+        console.error(`Ошибка при проверке участия пользователя ${userId} в ${chatId}:`, error);
+        return false;
+    }
+}
 
 bot.command('lllghauth', async (ctx) => {
     // Получаем userId из контекста
