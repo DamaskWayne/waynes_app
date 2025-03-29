@@ -335,6 +335,160 @@ const getUsername = async (ctx, userId) => {
     }
 };
 
+bot.command('clans', async (ctx) => {
+	const isModerator = await checkModerator(ctx);
+  	if (!isModerator) {
+    	return ctx.reply('🚫 У вас нет прав на использование этой команды.');
+  }
+
+  try {
+    // Получаем данные о кланах и их владениях
+    const { data: clans, error: clansError } = await supabase
+      .from('clan')
+      .select('*')
+      .order('score', { ascending: false });
+    
+    if (clansError) throw clansError;
+
+    // Для каждого клана получаем его владения
+    for (const clan of clans) {
+      const { data: villages, error: villagesError } = await supabase
+        .from('captured_villages')
+        .select('*')
+        .eq('clan_id', clan.clan_id);
+      
+      if (villagesError) throw villagesError;
+
+      // Формируем сообщение
+      let message = `🆔 ID: ${clan.clan_id}\n`;
+	  message += `🏰 Клан: ${clan.clan_name}\n`;
+      message += `👑 Создатель: ${clan.creator}\n`;
+      message += `💰 Общак: ${clan.score} WCoin\n`;
+      message += `🏆 Побед: ${clan.wins} | Поражений: ${clan.losses}\n`;
+      message += `⏳ Доход: ${clan.income || 0} WCoin/2мин\n\n`;
+      message += `🏡 Владения:\n`;
+
+      if (villages.length > 0) {
+        villages.forEach(village => {
+          const capturedTime = new Date(village.captured_at);
+          const now = new Date();
+          const diffMs = now - capturedTime;
+          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+          const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+          
+          message += `- ${village.village_name} (${diffDays}д ${diffHours}ч ${diffMins}м)\n`;
+          message += `  💰 Доход: ${village.income} WCoin/2мин\n`;
+        });
+      } else {
+        message += `Нет владений\n`;
+      }
+
+      message += `\n----------------\n`;
+
+      // Отправляем сообщение
+      await ctx.reply(message);
+    }
+
+  } catch (error) {
+    console.error('Error in /clans command:', error);
+    ctx.reply('Произошла ошибка при получении информации о кланах');
+  }
+});
+
+// Команда /war (только для админа)
+bot.command('war', async (ctx) => {
+  if (!checkAdmin(ctx)) {
+    return ctx.reply('Нет такой команды');
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length < 3) {
+    return ctx.reply('Использование: /war [clan_id] [Название деревни]');
+  }
+
+  const clanId = parseInt(args[1]);
+  const villageName = args.slice(2).join(' ');
+
+  try {
+    // 1. Проверяем существование клана
+    const { data: clan, error: clanError } = await supabase
+      .from('clan')
+      .select('*')
+      .eq('clan_id', clanId)
+      .single();
+    
+    if (clanError || !clan) {
+      return ctx.reply('Клан не найден');
+    }
+
+    // 2. Проверяем наличие деревни у клана
+    const { data: village, error: villageError } = await supabase
+      .from('captured_villages')
+      .select('*')
+      .eq('clan_id', clanId)
+      .eq('village_name', villageName)
+      .single();
+    
+    if (villageError || !village) {
+      return ctx.reply('Деревня не найдена у указанного клана');
+    }
+
+    // 3. Рандомный враг
+    const enemies = ['Темный рыцарь', 'Огненный маг', 'Ледяная валькирия', 'Красный дракон'];
+    const randomEnemy = enemies[Math.floor(Math.random() * enemies.length)];
+
+    // 4. Удаляем деревню из captured_villages
+    const { error: deleteError } = await supabase
+      .from('captured_villages')
+      .delete()
+      .eq('village_name', villageName)
+      .eq('clan_id', clanId);
+    
+    if (deleteError) throw deleteError;
+
+    // 5. Обновляем holdings и losses в таблице clan
+    const currentHoldings = clan.holdings || [];
+    const updatedHoldings = currentHoldings.filter(v => v.name !== villageName);
+    
+    const { error: updateError } = await supabase
+      .from('clan')
+      .update({ 
+        holdings: updatedHoldings,
+        losses: (clan.losses || 0) + 1 // Просто увеличиваем значение на 1
+      })
+      .eq('clan_id', clanId);
+    
+    if (updateError) throw updateError;
+
+    // 6. Добавляем запись в историю битв
+    const { error: historyError } = await supabase
+      .from('battle_history')
+      .insert([{
+        clan_id: clanId,
+        battle_type: 'defense',
+        enemy_name: randomEnemy,
+        target_village: villageName,
+        result: 'lose',
+        losses: villageName,
+        battle_time: new Date().toISOString()
+      }]);
+    
+    if (historyError) throw historyError;
+
+    ctx.replyWithHTML(
+      `✅ Деревня <b>${villageName}</b> успешно отобрана у клана <b>${clan.clan_name}</b>!\n` +
+      `🛡️ Захватчик: <i>${randomEnemy}</i>\n` +
+      `📉 Потери: ${villageName} (${village.income} WCoin/2мин)\n` +
+      `💔 Поражений у клана: ${(clan.losses || 0) + 1}`
+    );
+
+  } catch (error) {
+    console.error('Error in /war command:', error);
+    ctx.reply('⚠️ Произошла ошибка при выполнении команды: ' + error.message);
+  }
+});
+
 // Команда /ahelp (доступ только для админа)
 bot.command('ahelp', async ctx => {
 	if (!await checkModerator(ctx)) {
