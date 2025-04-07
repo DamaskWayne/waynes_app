@@ -5838,7 +5838,7 @@ vk.updates.on('message_new', async context => {
 		} else {
 			context.send('❌ Вы не состоите в клане.')
 		}
-	} else if (message.startsWith('/wclan захват')) {
+	} else if (message.startsWith('/wclan ахитыавыпзахват')) {
 		const villageName = message.split(' ').slice(2).join(' ')
 
 		const village = await getVillageByName(villageName)
