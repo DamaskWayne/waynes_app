@@ -496,7 +496,7 @@ bot.command('ahelp', async ctx => {
     }
 
 	await ctx.reply(
-		`Модераторские команды:\n/mute [id/ответ на сообщение] [мин] [причина]\n/unmute [id/ответ на сообщение]\n/mutelist\n/ban [id/ответ на сообщение] [дни] [причина]\n/unban [id/ответ на сообщение]\n/banlist\n/warn [id/ответ на сообщение] [причина]\n/unwarn [id/ответ на сообщение]\n/warnlist\n/check [id/ответ на сообщение]\n\nПрочее:\n/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]\n/рассылка [текст]`
+		`Модераторские команды:\n/mute [id/ответ на сообщение] [мин] [причина]\n/unmute [id/ответ на сообщение]\n/mutelist\n/ban [id/ответ на сообщение] [дни] [причина]\n/unban [id/ответ на сообщение]\n/banlist\n/warn [id/ответ на сообщение] [причина]\n/unwarn [id/ответ на сообщение]\n/warnlist\n/check [id/ответ на сообщение]\n/logs\n\nПрочее:\n/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]\n/рассылка [текст]`
 	)
 })
 
@@ -1041,6 +1041,426 @@ async function checkUserMembership(ctx, userId, chatId) {
         return false;
     }
 }
+
+// Глобальная переменная для хранения состояния пагинации
+const paginationState = new Map();
+
+// Очистка старых сессий каждые 5 минут
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of paginationState.entries()) {
+    if (now - value.timestamp > 30 * 60 * 1000) { // 30 минут TTL
+      paginationState.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// Команда для логов с пагинацией
+bot.command('logs', async (ctx) => {
+  if (!(await checkModerator(ctx))) {
+    return ctx.reply('🚫 У вас нет прав доступа к этой команде');
+  }
+
+  // Помощь по команде
+  if (!ctx.message.text.includes('=')) {
+    return ctx.reply(`
+📊 Команда для просмотра логов транзакций:
+
+/logs [фильтры] [page=N]
+
+Доступные фильтры:
+telegram=[ID] - фильтр по ID пользователя
+type=[тип] - тип операции (shon_seller, clan_withdraw и др.)
+nickname=[ник] - фильтр по нику (регистронезависимый)
+amount=[число] - точная сумма
+amount_gt=[число] - сумма больше чем
+amount_lt=[число] - сумма меньше чем
+date_from=[YYYY-MM-DD] - начиная с даты
+date_to=[YYYY-MM-DD] - заканчивая датой
+page=[N] - номер страницы (по умолчанию 1)
+
+Примеры:
+/logs telegram=12345
+/logs type=shon_seller date_from=2023-01-01 page=2
+/logs nickname=Wayne amount_gt=100
+`);
+  }
+
+  await sendFilteredHtmlReport(ctx);
+});
+
+function formatNumber(num) {
+  // Проверяем, является ли число целым
+  return Number.isInteger(num) ? num.toString() : num.toFixed(2).replace(/\.?0+$/, '');
+}
+
+// Функция для отправки HTML-отчета с фильтрами и пагинацией
+async function sendFilteredHtmlReport(ctx) {
+  try {
+    const args = ctx.message.text.split(' ').slice(1);
+    const userId = ctx.from.id;
+    const pageSize = 100; // Количество записей на странице
+    
+    // Извлекаем номер страницы из аргументов
+    let page = 1;
+    const pageArg = args.find(arg => arg.startsWith('page='));
+    if (pageArg) {
+      page = parseInt(pageArg.split('=')[1]) || 1;
+      args.splice(args.indexOf(pageArg), 1); // Удаляем page из фильтров
+    }
+
+    // Сохраняем фильтры для пагинации
+    const filterKey = `${userId}:${args.join('_')}`;
+    paginationState.set(filterKey, { 
+      args, 
+      page,
+      timestamp: Date.now() // Добавляем метку времени
+    });
+
+    let query = supabase
+      .from('transactions')
+      .select('telegram, nickname, type, amount, description, balance_after, date', { count: 'exact' })
+      .order('date', { ascending: false });
+
+    // Применяем фильтры
+    args.forEach(arg => {
+      const [key, value] = arg.split('=');
+      if (!key || !value) return;
+
+      switch(key) {
+        case 'telegram':
+          query = query.eq('telegram', parseInt(value));
+          break;
+        case 'type':
+          query = query.eq('type', value);
+          break;
+        case 'nickname':
+          query = query.ilike('nickname', `%${value}%`);
+          break;
+        case 'amount':
+          query = query.eq('amount', parseFloat(value));
+          break;
+        case 'amount_gt':
+          query = query.gt('amount', parseFloat(value));
+          break;
+        case 'amount_lt':
+          query = query.lt('amount', parseFloat(value));
+          break;
+        case 'date_from':
+          query = query.gte('date', `${value}T00:00:00`);
+          break;
+        case 'date_to':
+          query = query.lte('date', `${value}T23:59:59`);
+          break;
+      }
+    });
+
+    // Добавляем пагинацию
+    query = query.range((page - 1) * pageSize, page * pageSize - 1);
+
+    const { data, count, error } = await query;
+
+    if (error) throw error;
+    if (!data?.length) return ctx.reply('🔍 Логов по указанным фильтрам не найдено');
+
+    // Общее количество страниц
+    const totalPages = Math.ceil(count / pageSize);
+
+    // Генерация HTML
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Отчет по транзакциям</title>
+  <style>
+    :root {
+      --bg-color: #1a1a2e;
+      --card-color: #16213e;
+      --text-color: #e6e6e6;
+      --accent-color: #4cc9f0;
+      --positive-color: #4ade80;
+      --negative-color: #f87171;
+      --border-color: #2d3748;
+    }
+    
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+    }
+    
+    .container {
+      max-width: 100%;
+      margin: 0 auto;
+      background-color: var(--card-color);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    h1 {
+      color: var(--accent-color);
+      margin-top: 0;
+      font-weight: 600;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 10px;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    
+    th {
+      background-color: #1e293b;
+      color: var(--accent-color);
+      padding: 12px 15px;
+      text-align: left;
+      font-weight: 500;
+      text-transform: uppercase;
+      font-size: 0.85em;
+      letter-spacing: 0.5px;
+    }
+    
+    td {
+      padding: 12px 15px;
+      border-bottom: 1px solid var(--border-color);
+    }
+    
+    tr:last-child td {
+      border-bottom: none;
+    }
+    
+    tr:hover {
+      background-color: rgba(74, 201, 240, 0.05);
+    }
+    
+    .negative {
+      color: var(--negative-color);
+      font-weight: 500;
+    }
+    
+    .positive {
+      color: var(--positive-color);
+      font-weight: 500;
+    }
+    
+    .summary {
+      background-color: rgba(26, 32, 44, 0.7);
+      padding: 15px;
+      border-radius: 8px;
+      margin: 20px 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      border: 1px solid var(--border-color);
+    }
+    
+    .summary p {
+      margin: 5px 0;
+      background-color: rgba(74, 201, 240, 0.1);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.9em;
+    }
+    
+    .pagination {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    
+    .page-info {
+      text-align: center;
+      margin: 15px 0;
+      color: #a0aec0;
+      font-size: 0.9em;
+    }
+    
+    .timestamp {
+      font-size: 0.8em;
+      color: #718096;
+      text-align: right;
+      margin-top: 20px;
+    }
+    
+    @media (max-width: 768px) {
+      td, th {
+        padding: 8px 10px;
+        font-size: 0.9em;
+      }
+      
+      .summary {
+        flex-direction: column;
+        gap: 8px;
+      }
+    }
+
+	.description-cell {
+      max-width: 300px;
+      white-space: normal;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    
+    .tooltip {
+      position: relative;
+      display: inline-block;
+    }
+    
+    .tooltip .tooltiptext {
+      visibility: hidden;
+      width: 300px;
+      background-color: #2d3748;
+      color: #fff;
+      text-align: center;
+      border-radius: 6px;
+      padding: 8px;
+      position: absolute;
+      z-index: 1;
+      bottom: 125%;
+      left: 50%;
+      transform: translateX(-50%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    
+    .tooltip:hover .tooltiptext {
+      visibility: visible;
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔍 Отчет по транзакциям</h1>
+    
+    <div class="summary">
+      <p><strong>Всего записей:</strong> ${count}</p>
+      <p><strong>Показано:</strong> ${data.length} (${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, count)})</p>
+      <p><strong>Период:</strong> ${new Date(data[data.length-1].date).toLocaleDateString()} - ${new Date(data[0].date).toLocaleDateString()}</p>
+      ${args.length > 0 ? `<p><strong>Фильтры:</strong> ${args.join(', ')}</p>` : ''}
+    </div>
+    
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Ник</th>
+          <th>Тип</th>
+          <th>Сумма</th>
+          <th>Баланс</th>
+          <th>Дата</th>
+          <th>Описание</th>
+        </tr>
+      </thead>
+      <tbody>
+      ${data.map(t => `
+        <tr>
+          <td><code>${t.telegram}</code></td>
+          <td>${t.nickname || '<span style="color: #a0aec0">Аноним</span>'}</td>
+          <td><span style="color: ${getTypeColor(t.type)}">${t.type}</span></td>
+          <td class="${t.amount < 0 ? 'negative' : 'positive'}">${formatNumber(t.amount)}</td>
+			<td>${formatNumber(t.balance_after)}</td>
+          <td>${formatDateTime(t.date)}</td>
+          <td class="description-cell">
+            <div class="tooltip">
+              ${t.description.length > 50 ? 
+                `${t.description.substring(0, 50)}...` : 
+                t.description}
+              ${t.description.length > 50 ? 
+                `<span class="tooltiptext">${t.description}</span>` : 
+                ''}
+            </div>
+          </td>
+        </tr>
+      `).join('')}
+      </tbody>
+    </table>
+    
+    <div class="page-info">
+      Страница ${page} из ${totalPages}
+    </div>
+    
+    <div class="timestamp">
+      Сгенерировано: ${new Date().toLocaleString()}
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    // Отправка HTML-файла
+    await ctx.replyWithDocument({
+      source: Buffer.from(html),
+      filename: `transactions_${new Date().toISOString().slice(0,10)}.html`
+    });
+
+    // Кнопки навигации
+    const buttons = [];
+    if (page > 1) {
+      buttons.push(Markup.button.callback('⬅ Назад', `prev_page:${filterKey}`));
+    }
+    if (page < totalPages) {
+      buttons.push(Markup.button.callback('Вперед ➡', `next_page:${filterKey}`));
+    }
+
+    if (buttons.length > 0) {
+      await ctx.reply('Навигация по страницам:', Markup.inlineKeyboard(buttons));
+    }
+
+  } catch (error) {
+    console.error('Ошибка при генерации отчета:', error);
+    ctx.reply('⚠ Произошла ошибка при формировании отчета');
+  }
+}
+
+function getTypeColor(type) {
+  const colors = {
+    'shon_seller': '#4cc9f0',
+    'clan_withdraw': '#f472b6',
+    'deposit': '#a78bfa',
+    'withdraw': '#f87171',
+    'transfer': '#60a5fa'
+  };
+  return colors[type] || '#a0aec0';
+}
+
+function formatDateTime(dateString) {
+  const date = new Date(dateString);
+  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+}
+
+// Обработка кнопок пагинации
+bot.action(/^(prev_page|next_page):(.+)$/, async (ctx) => {
+  if (!(await checkModerator(ctx))) {
+    return ctx.answerCbQuery('🚫 Нет прав доступа', { show_alert: true });
+  }
+
+  const [action, filterKey] = ctx.match;
+  const state = paginationState.get(filterKey);
+  
+  if (!state || Date.now() - state.timestamp > 30 * 60 * 1000) {
+    return ctx.answerCbQuery('Сессия просмотра истекла. Запросите отчет заново.', { show_alert: true });
+  }
+
+  // Обновляем timestamp при каждом действии
+  state.timestamp = Date.now();
+  state.page = action === 'prev_page' ? state.page - 1 : state.page + 1;
+  paginationState.set(filterKey, state);
+
+  await ctx.deleteMessage();
+  const command = `/logs ${state.args.join(' ')} page=${state.page}`;
+  await ctx.reply(`Загружаю страницу ${state.page}... ${command}`);
+  await sendFilteredHtmlReport(ctx);
+});
 
 bot.command('lllghauth', async (ctx) => {
     // Получаем userId из контекста
