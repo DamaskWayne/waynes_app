@@ -1111,16 +1111,12 @@ async function sendFilteredHtmlReport(ctx) {
 
     // Сохраняем фильтры для пагинации
     const filterKey = `${userId}:${args.join('_')}`;
-    paginationState.set(filterKey, { 
-      args, 
-      page,
-      timestamp: Date.now() // Добавляем метку времени
-    });
-
+    
     let query = supabase
       .from('transactions')
       .select('telegram, nickname, type, amount, description, balance_after, date', { count: 'exact' })
-      .order('date', { ascending: false });
+      .order('date', { ascending: false })
+      .limit(pageSize);
 
     // Применяем фильтры
     args.forEach(arg => {
@@ -1155,15 +1151,30 @@ async function sendFilteredHtmlReport(ctx) {
       }
     });
 
-    // Добавляем пагинацию
-    query = query.range((page - 1) * pageSize, page * pageSize - 1);
+    // Для страниц после первой используем курсорную пагинацию
+    if (page > 1) {
+      const state = paginationState.get(filterKey);
+      if (!state || !state.lastDate) {
+        return ctx.reply('⚠ Сессия просмотра истекла или некорректна. Запросите отчет заново.');
+      }
+      query = query.lt('date', state.lastDate);
+    }
 
     const { data, count, error } = await query;
 
     if (error) throw error;
     if (!data?.length) return ctx.reply('🔍 Логов по указанным фильтрам не найдено');
 
-    // Общее количество страниц
+    // Сохраняем lastDate для курсорной пагинации
+    const lastDate = data[data.length - 1]?.date;
+    paginationState.set(filterKey, { 
+      args, 
+      page,
+      lastDate, // Сохраняем дату последней записи
+      timestamp: Date.now()
+    });
+
+    // Общее количество страниц (приблизительно)
     const totalPages = Math.ceil(count / pageSize);
 
     // Генерация HTML
@@ -1345,7 +1356,7 @@ async function sendFilteredHtmlReport(ctx) {
     <div class="summary">
       <p><strong>Всего записей:</strong> ${count}</p>
       <p><strong>Показано:</strong> ${data.length} (${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, count)})</p>
-      <p><strong>Период:</strong> ${new Date(data[data.length-1].date).toLocaleDateString()} - ${new Date(data[0].date).toLocaleDateString()}</p>
+      <p><strong>Период:</strong> ${formatDateTime(data[data.length-1].date)} - ${formatDateTime(data[0].date)}</p>
       ${args.length > 0 ? `<p><strong>Фильтры:</strong> ${args.join(', ')}</p>` : ''}
     </div>
     
@@ -1390,7 +1401,7 @@ async function sendFilteredHtmlReport(ctx) {
     </div>
     
     <div class="timestamp">
-      Сгенерировано: ${new Date().toLocaleString()}
+      Сгенерировано: ${formatDateTime(new Date().toISOString())}
     </div>
   </div>
 </body>
@@ -1435,7 +1446,15 @@ function getTypeColor(type) {
 
 function formatDateTime(dateString) {
   const date = new Date(dateString);
-  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  
+  // Форматируем дату вручную для единообразия
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  
+  return `${day}.${month}.${year} ${hours}:${minutes}`;
 }
 
 // Обработка кнопок пагинации
@@ -1451,9 +1470,9 @@ bot.action(/^(prev_page|next_page):(.+)$/, async (ctx) => {
     return ctx.answerCbQuery('Сессия просмотра истекла. Запросите отчет заново.', { show_alert: true });
   }
 
-  // Обновляем timestamp при каждом действии
-  state.timestamp = Date.now();
+  // Обновляем страницу и timestamp
   state.page = action === 'prev_page' ? state.page - 1 : state.page + 1;
+  state.timestamp = Date.now();
   paginationState.set(filterKey, state);
 
   await ctx.deleteMessage();
