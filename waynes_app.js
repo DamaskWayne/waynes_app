@@ -43,6 +43,46 @@ bot.command('faq', async ctx => {
 	)
 })
 
+bot.command('subscribe', async (ctx) => {
+    const subscriptionName = ctx.payload.trim()
+    const userId = ctx.from.id
+    const username = ctx.from.username || 'без ника'
+    
+    // Отправляем сообщение пользователю
+    await ctx.reply('Отличное решение дополнить свои возможности в нашем приложении 😍\n\n💳 Способы оплаты:\n\n• VK Donut с автоматическим ежемесячным списанием: https://vk.com/waynes_family?w=donut_payment-199010052&source=description.\n• Оплата по переводу или QR-коду СБП\n• Оплата через Telegram Stars/Ton (в разработке)\n• Оплата за WCoin\n\nЕсли у вас остались вопросы или выше перечисленные способы вам не подходят, пожалуйста, свяжитесь с нами через команду: /ask Вопрос или лично @dmitry_damask')
+    
+    const adminMessage = `[Subscribe] Пользователь с ID ${userId} с ником ${username} хочет приобрести подписку ${subscriptionName}\n\nЧтобы ответить, напишите /pm ${userId} [Текст]`
+    
+    try {
+        await bot.telegram.sendMessage(950607972, adminMessage)
+    } catch (error) {
+        console.error('Ошибка при отправке уведомления админу:', error)
+    }
+})
+
+bot.command('ask', async (ctx) => {
+    const question = ctx.payload.trim()
+    const userId = ctx.from.id
+    const username = ctx.from.username || 'без ника'
+    
+    if (!question) {
+        return ctx.reply('Пожалуйста, укажите ваш вопрос после команды /ask')
+    }
+    
+    // Уведомление пользователю
+    await ctx.reply('Ваш вопрос отправлен администратору. Ожидайте ответа.')
+    
+    // Уведомление админу
+    const adminMessage = `[Question] Пользователь ${username} (ID: ${userId}) задал вопрос:\n\n${question}\n\nОтветить: /pm ${userId} [Текст]`
+    
+    try {
+        await bot.telegram.sendMessage(950607972, adminMessage)
+    } catch (error) {
+        console.error('Ошибка при отправке уведомления админу:', error)
+        await ctx.reply('Произошла ошибка при отправке вопроса. Пожалуйста, попробуйте позже.')
+    }
+})
+
 const promoCodestg = {} // Хранение промокодов в оперативной памяти
 const usedPromoCodes = {} // Хранение использованных промокодов для пользователей
 
@@ -72,6 +112,29 @@ const checkModerator = async ctx => {
 
 	return data.length > 0 // Если пользователь найден в таблице admins, возвращаем true
 }
+
+bot.command('pm', async (ctx) => {
+    if (!checkAdmin(ctx)) {
+        await ctx.reply('Эта команда доступна только администратору')
+        return
+    }
+    
+    const [_, userId, ...messageParts] = ctx.message.text.split(' ')
+    const message = messageParts.join(' ')
+    
+    if (!userId || !message) {
+        await ctx.reply('Использование: /pm [ID] [Текст]')
+        return
+    }
+    
+    try {
+        await bot.telegram.sendMessage(userId, `[Админ] ${message}`)
+        await ctx.reply(`Сообщение отправлено пользователю ${userId}`)
+    } catch (error) {
+        console.error('Ошибка при отправке сообщения:', error)
+        await ctx.reply('Не удалось отправить сообщение. Пользователь заблокировал бота?')
+    }
+})
 
 bot.command('addhistory', async ctx => {
 	if (!checkAdmin(ctx)) {
