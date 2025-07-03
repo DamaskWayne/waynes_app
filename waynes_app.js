@@ -21,25 +21,365 @@ const webAppUrl = 'https://waynes-app.web.app' // https://waynes-app.web.app
 const bot = new Telegraf(token)
 
 bot.command('start', ctx => {
-	ctx.reply(
-		'Hello! Привет! 👋\n\nВпервые здесь можно получить Telegram Premium, Яндекс Плюс и др. подписки за WCoin! 🎁\n\n📖 Наш официальный канал: https://t.me/waynes_premium\n\n💬 Наш чат: https://t.me/+THCVJSKfbjY2MTgy\n\n/help — узнать команды\n\n',
-		Markup.inlineKeyboard([
-			Markup.button.webApp('Waynes App', `${webAppUrl}?ref=${ctx.payload}`),
-		])
-	)
-})
+    ctx.reply(
+        'Hello! Привет! 👋\n\nВпервые здесь можно получить Telegram Premium, Яндекс Плюс и др. подписки за WCoin! 🎁\n\n📖 Наш официальный канал: https://t.me/waynes_premium\n\n💬 Наш чат: https://t.me/+THCVJSKfbjY2MTgy\n\n',
+        Markup.inlineKeyboard([
+            [Markup.button.webApp('Waynes App', `${webAppUrl}?ref=${ctx.payload}`)],
+            [Markup.button.callback('Меню', 'show_menu')]
+        ])
+    );
+});
 
-bot.command('help', async ctx => {
+// Новое сообщение с меню
+bot.action('show_menu', async (ctx) => {
+    try {
+        await ctx.editMessageText(
+            '🔍 **Выберите раздел быстрого меню:**',
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            Markup.button.callback('👤 Профиль', 'profile'),
+                            Markup.button.callback('💱 Обмен WCoin', 'exchange')
+                        ],
+                        [
+                            Markup.button.callback('❓ Помощь', 'help'),
+                            Markup.button.callback('⭐ The Waynes', 'waynes')
+                        ],
+                        [
+                            Markup.button.callback('📊 Реферальная система', 'referral')
+                        ],
+						[
+							Markup.button.webApp('Waynes App', `${webAppUrl}?ref=${ctx.payload}`)
+						]
+                    ]
+                }
+            }
+        );
+    } catch (err) {
+        // Если не получилось отредактировать (например, при первом нажатии), отправляем новое сообщение
+        await ctx.reply(
+            '🔍 **Выберите раздел быстрого меню:**',
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            Markup.button.callback('👤 Профиль', 'profile'),
+                            Markup.button.callback('💱 Обмен WCoin', 'exchange')
+                        ],
+                        [
+                            Markup.button.callback('❓ Помощь', 'help'),
+                            Markup.button.callback('⭐ The Waynes', 'waynes')
+                        ],
+                        [
+                            Markup.button.callback('📊 Реферальная система', 'referral')
+                        ],
+						[
+							Markup.button.webApp('Waynes App', `${webAppUrl}?ref=${ctx.payload}`)
+						]
+                    ]
+                }
+            }
+        );
+    }
+});
+
+// Обработчик кнопки "Профиль" с улучшенным логированием
+bot.action('profile', async (ctx) => {
+    const telegramId = ctx.from.id;
+
+    try {
+        // 1. Получаем данные пользователя
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('telegram, score, vip_level')
+            .eq('telegram', telegramId)
+            .single();
+
+        if (userError || !user) {
+            console.error('Ошибка при получении пользователя:', userError);
+            throw new Error('Пользователь не найден');
+        }
+
+        // 2. Получаем место в рейтинге
+        const { count: rank } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true })
+            .gt('score', user.score || 0);
+
+        // 3. Улучшенный запрос клана с подробным логированием
+        let clanName = 'Нет';
+        try {
+            const { data: clanMember, error: clanError } = await supabase
+                .from('clan_members')
+                .select('clan_id')
+                .eq('telegram', telegramId)
+                .maybeSingle();
+
+            if (clanError) {
+                console.error('Ошибка при запросе clan_members:', clanError);
+                throw clanError;
+            }
+
+            if (clanMember?.clan_id) {
+                
+                const { data: clan, error: clanNameError } = await supabase
+                    .from('clan')
+                    .select('clan_name')
+                    .eq('clan_id', clanMember.clan_id)
+                    .single();
+
+                if (clanNameError) {
+                    console.error('Ошибка при запросе clans:', clanNameError);
+                    throw clanNameError;
+                }
+
+                if (clan) {
+                    clanName = clan.clan_name;
+                } else {
+                    console.log(`Клан не найден для clan_id: ${clanMember.clan_id}`);
+                }
+            } else {
+                console.log(`Пользователь ${telegramId} не состоит в клане (нет записи в clan_members)`);
+            }
+        } catch (clanErr) {
+            console.error('Ошибка при обработке клана:', clanErr);
+            // Продолжаем выполнение, но clanName останется "Нет"
+        }
+
+        // 4. Определяем подписку
+        const vipLevels = {
+            1: 'VIP',
+            2: 'PRO',
+            3: 'Premium',
+            4: 'Exclusive'
+        };
+        const subscription = vipLevels[user.vip_level] || 'Нет';
+
+        // 5. Формируем ответ
+        const message = `
+👨‍💻 *Telegram ID:* ${telegramId}
+💵 *WCoin:* ${user.score || 0}
+👑 *Место в рейтинге:* ${rank + 1}
+🏡 *Клан:* ${clanName}
+💎 *Подписка:* ${subscription}
+        `;
+
+        await ctx.editMessageText(message, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.callback('Назад', 'show_menu')]
+                ]
+            }
+        });
+
+    } catch (err) {
+        console.error('Ошибка при запросе профиля:', err);
+        await ctx.reply('❌ Ошибка при загрузке данных. Попробуйте позже.');
+    }
+});
+
+bot.action('help', async (ctx) => {
+    const helpMessage = `
+🎁 *Используйте* /usepromo промокод
+📌 /start - открыть веб-приложение
+📚 /faq - ответы на все вопросы
+
+Остались вопросы? Напишите нам в /ask
+    `;
+
+    try {
+        await ctx.editMessageText(helpMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.callback('Назад', 'show_menu')]
+                ]
+            }
+        });
+    } catch (err) {
+        console.error('Ошибка при отображении помощи:', err);
+        await ctx.reply(helpMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.callback('Назад', 'show_menu')]
+                ]
+            }
+        });
+    }
+});
+
+bot.action('exchange', async (ctx) => {
+    const exchangeMessage = `
+💱 *Обмен WCoin*
+
+Обменивайте *VPN* трафик за WCoin в нашем приложении автоматически, просто попробуйте! А с подпиской *PRO* и выше, доступ доуступен *бесплатно*.
+
+Временно мы принимаем обмен за WCoin платных подписок только через /ask
+
+С вами связываются наши модераторы и оплачиваем услугу, которая доступна.
+
+Более детально можно посмотреть в нашем приложении *Mini App*
+    `;
+
+    try {
+        await ctx.editMessageText(exchangeMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.webApp('Открыть Mini App', `${webAppUrl}?ref=${ctx.from.id}`)],
+                    [Markup.button.callback('Назад', 'show_menu')]
+                ]
+            }
+        });
+    } catch (err) {
+        console.error('Ошибка при отображении обмена:', err);
+        await ctx.reply(exchangeMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.webApp('Открыть Mini App', `${webAppUrl}?ref=${ctx.from.id}`)],
+                    [Markup.button.callback('Назад', 'show_menu')]
+                ]
+            }
+        });
+    }
+});
+
+bot.action('referral', async (ctx) => {
+    const telegramId = ctx.from.id;
+    
+    try {
+        // 1. Получаем данные пользователя
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('friends, vip_level')
+            .eq('telegram', telegramId)
+            .single();
+
+        if (userError) {
+            console.error('Ошибка при получении рефералов:', userError);
+            throw new Error('Ошибка при загрузке данных');
+        }
+
+        // 2. Определяем текущий бонус за приглашение (только для информации)
+        const referralBonuses = {
+            0: 500,
+            1: 700,
+            2: 1000,
+            3: 1500,
+            4: 2000
+        };
+        
+        const currentBonus = referralBonuses[user?.vip_level || 0];
+        const maxBonus = 2000;
+        const bonusMessage = currentBonus === maxBonus 
+            ? `🎁 *Бонус:* ${currentBonus} WCoin (максимальный)` 
+            : `🎁 *Бонус:* ${currentBonus} WCoin (увеличьте до ${maxBonus} WCoin купив подписку)`;
+
+        // 3. Парсим рефералов и считаем бонусы
+        let totalReferrals = 0;
+        let totalEarned = 0;
+        const defaultBonus = 500; // Фиксированный бонус для старых рефералов
+
+        if (user?.friends) {
+            try {
+                const friends = typeof user.friends === 'string' 
+                    ? JSON.parse(user.friends) 
+                    : user.friends;
+
+                totalReferrals = Object.keys(friends).length;
+
+                // Считаем общий заработок
+                for (const [id, data] of Object.entries(friends)) {
+                    if (typeof data === 'object' && data.bonus) {
+                        // Если указан bonus - используем его
+                        totalEarned += data.bonus;
+                    } else {
+                        // Если bonus не указан - всегда 500 WCoin
+                        totalEarned += defaultBonus;
+                    }
+                }
+            } catch (parseError) {
+                console.error('Ошибка парсинга friends:', parseError);
+            }
+        }
+
+        // 4. Формируем сообщение
+        const message = `
+📊 *Реферальная система*
+
+👥 *Вы пригласили:* ${totalReferrals} человек
+💰 *Всего заработано:* ${totalEarned} WCoin
+${bonusMessage}
+🔗 *Реф.ссылка:* \`https://t.me/the_waynes_bot?start=${telegramId}\`
+        `;
+
+        await ctx.editMessageText(message, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.callback('Назад', 'show_menu')]
+                ]
+            }
+        });
+
+    } catch (err) {
+        console.error('Ошибка в реферальной системе:', err);
+        await ctx.reply('❌ Ошибка при загрузке реферальных данных. Попробуйте позже.', {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.callback('Назад', 'show_menu')]
+                ]
+            }
+        });
+    }
+});
+
+// Обработчик возврата в меню
+bot.action('show_menu', async (ctx) => {
+    await ctx.editMessageText(
+        '🔍 **Выберите раздел быстрого меню:**',
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        Markup.button.callback('👤 Профиль', 'profile'),
+                        Markup.button.callback('💱 Обмен WCoin', 'exchange')
+                    ],
+                    [
+                        Markup.button.callback('❓ Помощь', 'help'),
+                        Markup.button.callback('⭐ The Waynes', 'waynes')
+                    ],
+                    [
+                        Markup.button.callback('📊 Реферальная система', 'referral')
+                    ],
+					[
+						Markup.button.webApp('Waynes App', `${webAppUrl}?ref=${ctx.payload}`)
+					]
+                ]
+            }
+        }
+    );
+});
+
+bot.command('id', async ctx => {
 	const telegramId = ctx.from.id // ID Telegram пользователя
 	await ctx.reply(
-		`👤 Ваш ID Telegram: ${telegramId}\n\n🎁 Используйте /usepromo промокод\n\n/start открыть веб-приложение.\n\n/faq ответы на все вопросы`
+		`👤 Ваш ID Telegram: ${telegramId}`
 	)
 })
 
 bot.command('faq', async ctx => {
 	const telegramId = ctx.from.id // ID Telegram пользователя
 	await ctx.reply(
-		`**О сервисе WAYNES**\n⭐ «WAYNES» — проект, который развивается в Информационных технологиях.\n\n💚 Здесь вы можете получить Telegram Premium, Яндекс Плюс и др. подписки за WCoin!\n\n💭 Для игроков ONLINE RP можно бесплатно обменивать WCoin на призы с кейсов и боксов.\n\n🗯Просмотр видео без обходов и развитие технологий.\n\n**Что такое WCoin?**\n⭐ WCoin — это валюта в нашем боте или приложении. Ты можешь использовать её для покупки кейсов, боксов, платных подписок.\n\n💚 Держатели WCoin будут цениться среди интернет пользователей. Мы постоянно реализовываем новые идеи, чтобы WCoin был ценнее предыдущего дня.\n\n❤ Инвестируя в нас, вы помогаете совершенствовать наш сервис и ваши WCoin!\n\n**Меня не заблокируют?**\nНет ❌\n\nЭто акция семьи «Waynes Family». Мы НЕ продаем игровую валюту, а разыгрываем как в обычном конкурсе, используя нашего бота для дополнительного пиара.\n\n❗ Запомните:\nМы не прокачиваем аккаунтыНе просим пароли от аккаунтов\nНе просим заплатить за участие в акции — УЧАСТИЕ БЕСПЛАТНОЕ\nПолучение наград — БЕСПЛАТНОЕ\n\n**Как получать призы?**\nКогда вы открываете бокс, сверху выходит зеленое уведомление о получении приза, сделайте скриншот и отправьте его в чат, указав банк.счет для отправки приза\nЧат для отправки: https://t.me/+THCVJSKfbjY2MTgy\nПодробнее в нашем посту: https://t.me/waynes_premium/11\n\nТакже у нас есть бот в ВК, где вы тоже можете открывать кейсы — https://vk.com/waynes_family`
+		`**О сервисе WAYNES**\n⭐ «WAYNES» — проект, который развивается в Информационных технологиях.\n\n💚 Здесь вы можете получить Telegram Premium, Яндекс Плюс VPN* и др. подписки за WCoin!\n\n💭 Для игроков ONLINE RP можно бесплатно обменивать WCoin на призы с кейсов и боксов.\n\n🗯Просмотр видео без обходов и развитие технологий.\n\n**Что такое WCoin?**\n⭐ WCoin — это валюта в нашем боте или приложении. Ты можешь использовать её для покупки кейсов, боксов, платных подписок.\n\n💚 Держатели WCoin будут цениться среди интернет пользователей. Мы постоянно реализовываем новые идеи, чтобы WCoin был ценнее предыдущего дня.\n\n❤ Инвестируя в нас, вы помогаете совершенствовать наш сервис и ваши WCoin!\n\n**Меня не заблокируют?**\nНет ❌\n\nЭто акция семьи «Waynes Family». Мы НЕ продаем игровую валюту, а разыгрываем как в обычном конкурсе, используя нашего бота для дополнительного пиара.\n\n❗ Запомните:\nМы не прокачиваем аккаунтыНе просим пароли от аккаунтов\nНе просим заплатить за участие в акции — УЧАСТИЕ БЕСПЛАТНОЕ\nПолучение наград — БЕСПЛАТНОЕ\n\n**Как получать призы?**\nКогда вы открываете бокс, сверху выходит зеленое уведомление о получении приза, сделайте скриншот и отправьте его в чат, указав банк.счет для отправки приза\nЧат для отправки: https://t.me/+THCVJSKfbjY2MTgy\nПодробнее в нашем посту: https://t.me/waynes_premium/11\n\nТакже у нас есть бот в ВК, где вы тоже можете открывать кейсы — https://vk.com/waynes_family`
 	)
 })
 
@@ -49,7 +389,7 @@ bot.command('subscribe', async (ctx) => {
     const username = ctx.from.username || 'без ника'
     
     // Отправляем сообщение пользователю
-    await ctx.reply('Отличное решение дополнить свои возможности в нашем приложении 😍\n\n💳 Способы оплаты:\n\n• VK Donut с автоматическим ежемесячным списанием: https://vk.com/donut/waynes_family.\n• Оплата по переводу или QR-коду СБП\n• Оплата через Telegram Stars/Ton (в разработке)\n• Оплата за WCoin\n\nЕсли у вас остались вопросы или выше перечисленные способы вам не подходят, пожалуйста, свяжитесь с нами через команду: /ask Вопрос или лично @dmitry_damask')
+    await ctx.reply('Отличное решение дополнить свои возможности в нашем приложении 😍\n\n💳 Способы оплаты:\n\n• VK Donut с автоматическим ежемесячным списанием: https://vk.com/waynes_family?w=donut_payment-199010052&source=description.\n• Оплата по переводу или QR-коду СБП\n• Оплата через Telegram Stars/Ton (в разработке)\n• Оплата за WCoin\n\nЕсли у вас остались вопросы или выше перечисленные способы вам не подходят, пожалуйста, свяжитесь с нами через команду: /ask Вопрос или лично @dmitry_damask')
     
     const adminMessage = `[Subscribe] Пользователь с ID ${userId} с ником ${username} хочет приобрести подписку ${subscriptionName}\n\nЧтобы ответить, напишите /pm ${userId} [Текст]`
     
@@ -73,7 +413,10 @@ bot.command('ask', async (ctx) => {
     await ctx.reply('Ваш вопрос отправлен администратору. Ожидайте ответа.')
     
     // Уведомление админу
-    const adminMessage = `[Question] Пользователь ${username} (ID: ${userId}) задал вопрос:\n\n${question}\n\nОтветить: /pm ${userId} [Текст]`
+    const adminMessage = 
+		`[Question] Пользователь ${username} (ID: ${userId}) задал вопрос:\n\n` +
+  		`${question}\n\n` +
+  		`Ответить: \`/pm ${userId} ответ\``;
     
     try {
         await bot.telegram.sendMessage(950607972, adminMessage)
@@ -112,6 +455,292 @@ const checkModerator = async ctx => {
 
 	return data.length > 0 // Если пользователь найден в таблице admins, возвращаем true
 }
+
+bot.command('ids', async (ctx) => {
+    // Проверяем права модератора
+    if (!(await checkModerator(ctx))) {
+        return ctx.reply('У вас нет прав для выполнения этой команды.')
+    }
+
+    try {
+        // Запрос для поиска дубликатов telegram ID в таблице users
+        const { data, error } = await supabase
+            .from('users')
+            .select('telegram')
+            .not('telegram', 'is', null) // Исключаем записи с null
+            .order('telegram', { ascending: true });
+
+        if (error) {
+            console.error('Ошибка при запросе пользователей:', error);
+            return ctx.reply('Произошла ошибка при получении данных.');
+        }
+
+        // Находим дубликаты
+        const duplicates = findDuplicates(data.map(user => user.telegram));
+
+        if (duplicates.length === 0) {
+            return ctx.reply('Дубликатов telegram ID не найдено.');
+        }
+
+        // Формируем сообщение
+        let message = `Найдено ${duplicates.length} пользователей с одинаковыми ID:\n\n`;
+        message += duplicates.join('\n');
+		message += `\n\nУдалить дубликаты /dids [id]`;
+
+        // Отправляем сообщение
+        await ctx.reply(message);
+    } catch (err) {
+        console.error('Ошибка в команде /ids:', err);
+        ctx.reply('Произошла ошибка при выполнении команды.');
+    }
+});
+
+// Функция для поиска дубликатов в массиве
+function findDuplicates(arr) {
+    const duplicates = [];
+    const seen = {};
+
+    arr.forEach((item) => {
+        if (seen[item]) {
+            if (seen[item] === 1) {
+                duplicates.push(item);
+            }
+            seen[item]++;
+        } else {
+            seen[item] = 1;
+        }
+    });
+
+    return duplicates;
+}
+
+bot.command('dids', async (ctx) => {
+    // Проверяем права модератора
+    if (!(await checkModerator(ctx))) {
+        return ctx.reply('🚫 У вас нет прав для выполнения этой команды.');
+    }
+
+    // Получаем аргумент (telegram_id)
+    const telegramId = ctx.message.text.split(' ')[1];
+
+    if (!telegramId) {
+        return ctx.reply('ℹ️ Использование: /dids [telegram_id]\nПример: /dids 12345678');
+    }
+
+    // Проверяем, что аргумент — число
+    if (!/^\d+$/.test(telegramId)) {
+        return ctx.reply('❌ Неверный формат ID. Укажите числовой telegram_id.');
+    }
+
+    try {
+        // Получаем все записи с этим telegram_id, отсортированные по id (от старой к новой)
+        const { data: usersData, error: usersError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('telegram', telegramId)
+            .order('id', { ascending: true });
+
+        if (usersError) {
+            console.error('Ошибка при запросе дубликатов:', usersError);
+            return ctx.reply('❌ Ошибка при получении данных из базы.');
+        }
+
+        // Если записей меньше 2 — дубликатов нет
+        if (usersData.length < 2) {
+            return ctx.reply(`ℹ️ Для пользователя ${telegramId} дубликатов не найдено.`);
+        }
+
+        // Первая запись (самая старая) — её не трогаем
+        const firstId = usersData[0].id;
+        const idsToDelete = usersData.slice(1).map(user => user.id);
+
+        // Удаляем все дубликаты, кроме первой записи
+        const { error: deleteError } = await supabase
+            .from('users')
+            .delete()
+            .in('id', idsToDelete);
+
+        if (deleteError) {
+            console.error('Ошибка при удалении дубликатов:', deleteError);
+            return ctx.reply('❌ Ошибка при удалении дубликатов.');
+        }
+
+        await ctx.reply(`✅ Удалено ${idsToDelete.length} дубликатов для пользователя ${telegramId}.`);
+    } catch (err) {
+        console.error('Ошибка в команде /dids:', err);
+        ctx.reply('❌ Произошла ошибка при выполнении команды.');
+    }
+});
+
+// Глобальный объект для хранения статистики
+const dailyStats = {
+    online: new Set(), // Уникальные пользователи онлайн
+    newUsers: 0,      // Новые пользователи
+    activity: 0,      // Общая активность
+    earned: 0,        // Заработано WCoin
+    spent: 0,         // Потрачено WCoin
+    lastReset: null,   // Время последнего сброса
+    nextReset: null    // Время следующего сброса
+};
+
+// Функция для сброса статистики в 00:00 по МСК
+function resetDailyStats() {
+    const now = new Date();
+    const mskOffset = 3 * 60 * 60 * 1000; // MSK UTC+3
+    const mskTime = new Date(now.getTime() + mskOffset);
+    const nextReset = new Date(mskTime);
+    nextReset.setHours(24, 0, 0, 0); // Следующий сброс в 00:00 MSK
+    
+    const timeUntilReset = nextReset - mskTime;
+    
+    dailyStats.lastReset = new Date();
+    dailyStats.nextReset = nextReset;
+    
+    setTimeout(() => {
+        dailyStats.online.clear();
+        dailyStats.newUsers = 0;
+        dailyStats.activity = 0;
+        dailyStats.earned = 0;
+        dailyStats.spent = 0;
+        console.log('Статистика за день сброшена');
+        resetDailyStats(); // Запускаем следующий таймер
+    }, timeUntilReset);
+}
+
+// Запускаем таймер сброса при старте бота
+resetDailyStats();
+
+// Функция для форматирования времени до рестарта
+function formatTimeUntilReset() {
+    if (!dailyStats.nextReset) return '00:00:00';
+    
+    const now = new Date();
+    const diff = dailyStats.nextReset - now;
+    
+    if (diff <= 0) return '00:00:00';
+    
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+    
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+// Команда /stats
+bot.command('stats', async (ctx) => {
+    if (!(await checkModerator(ctx))) {
+        return ctx.reply('🚫 У вас нет прав для выполнения этой команды.');
+    }
+
+    try {
+        // Получаем текущую дату (без времени) для точного среза суток
+        const now = new Date();
+        const todayStart = new Date(now);
+        todayStart.setHours(0, 0, 0, 0);
+        const isoString = todayStart.toISOString();
+
+        // 1. Получаем данные о новых пользователях (только за текущие сутки)
+        const { count: newUsersCount } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true })
+            .gte('created_at', isoString);
+
+        // 2. Получаем данные о транзакциях (только за текущие сутки)
+        const { data: transactions, error: transactionsError } = await supabase
+            .from('transactions')
+            .select('telegram, amount, date')
+            .gte('date', isoString);
+
+        if (transactionsError) throw transactionsError;
+
+        // Сбрасываем статистику перед пересчетом (кроме онлайн)
+        const prevOnline = new Set(dailyStats.online);
+        dailyStats.newUsers = 0;
+        dailyStats.activity = 0;
+        dailyStats.earned = 0;
+        dailyStats.spent = 0;
+
+        // Обрабатываем транзакции
+        const uniqueUsers = new Set();
+        let earned = 0;
+        let spent = 0;
+        let activity = 0;
+
+        transactions.forEach(transaction => {
+            activity++;
+            uniqueUsers.add(transaction.telegram);
+            
+            if (transaction.amount > 0) {
+                earned += transaction.amount;
+            } else {
+                spent += Math.abs(transaction.amount);
+            }
+        });
+
+        // Обновляем локальную статистику
+        dailyStats.online = new Set([...prevOnline, ...uniqueUsers]);
+        dailyStats.newUsers = newUsersCount || 0;
+        dailyStats.activity = activity; // Не прибавляем, а перезаписываем
+        dailyStats.earned = earned;
+        dailyStats.spent = spent;
+
+        // Формируем сообщение
+        const message = `
+📊 *Детальная статистика The Waynes за 24ч*
+
+👥 *Онлайн:* ${dailyStats.online.size} уникальных пользователей
+🆕 *Новые пользователи:* ${dailyStats.newUsers}
+📈 *Общая активность:* ${dailyStats.activity} действий
+💰 *Заработано всего WCoin:* ${dailyStats.earned.toFixed(2)}
+💸 *Потрачено всего WCoin:* ${dailyStats.spent.toFixed(2)}
+⏳ *Рестарт данных через:* ${formatTimeUntilReset()}
+🔄 *Последнее обновление:* ${now.toLocaleTimeString()}
+        `;
+
+        // Если сообщение можно редактировать (callback), редактируем
+        if (ctx.callbackQuery) {
+            await ctx.editMessageText(message, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [Markup.button.callback('🔄 Обновить', 'refresh_stats')]
+                    ]
+                }
+            });
+            await ctx.answerCbQuery();
+        } else {
+            await ctx.reply(message, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [Markup.button.callback('🔄 Обновить', 'refresh_stats')]
+                    ]
+                }
+            });
+        }
+
+    } catch (err) {
+        console.error('Ошибка при получении статистики:', err);
+        if (ctx.callbackQuery) {
+            await ctx.answerCbQuery('❌ Ошибка при обновлении статистики');
+        } else {
+            await ctx.reply('❌ Ошибка при загрузке статистики. Попробуйте позже.');
+        }
+    }
+});
+
+// Обработчик кнопки "Обновить"
+bot.action('refresh_stats', async (ctx) => {
+    await ctx.answerCbQuery('🔄 Обновляем статистику...');
+    await ctx.replyWithChatAction('typing');
+    
+    // Вызываем обработчик команды /stats с контекстом callbackQuery
+    await bot.handleUpdate({
+        ...ctx.update,
+        message: ctx.callbackQuery.message,
+        callbackQuery: ctx.callbackQuery
+    });
+});
 
 bot.command('pm', async (ctx) => {
     if (!checkAdmin(ctx)) {
@@ -178,7 +807,7 @@ bot.command('addhistory', async ctx => {
 bot.hears(/^\/рассылка(?:\s|$)/, async ctx => {
 	// Проверка прав доступа
 	if (!checkAdmin(ctx)) {
-		return ctx.reply('У вас нет прав на использование этой команды.')
+		return ctx.reply('🚫 У вас нет прав на использование этой команды.')
 	}
 
 	// Получаем текст рассылки
@@ -241,7 +870,7 @@ bot.hears(/^\/рассылка(?:\s|$)/, async ctx => {
 // Команда /creatpromo [название] [сумма]
 bot.command('creatpromo', ctx => {
 	if (!checkAdmin(ctx)) {
-		return ctx.reply('У вас нет прав на использование этой команды.')
+		return ctx.reply('🚫 У вас нет прав на использование этой команды.')
 	}
 
 	const args = ctx.message.text.split(' ').slice(1)
@@ -266,7 +895,7 @@ bot.command('creatpromo', ctx => {
 // Команда /ccreatpromo [название] [сумма] [кол-во активаций]
 bot.command('ccreatpromo', ctx => {
 	if (!checkAdmin(ctx)) {
-		return ctx.reply('У вас нет прав на использование этой команды.')
+		return ctx.reply('🚫 У вас нет прав на использование этой команды.')
 	}
 
 	const args = ctx.message.text.split(' ').slice(1)
@@ -295,7 +924,7 @@ bot.command('ccreatpromo', ctx => {
 // Команда /delpromo [название]
 bot.command('delpromo', ctx => {
 	if (!checkAdmin(ctx)) {
-		return ctx.reply('У вас нет прав на использование этой команды.')
+		return ctx.reply('🚫 У вас нет прав на использование этой команды.')
 	}
 
 	const args = ctx.message.text.split(' ').slice(1)
@@ -311,92 +940,6 @@ bot.command('delpromo', ctx => {
 	delete promoCodestg[promoName]
 	return ctx.reply(`Промокод ${promoName} удалён.`)
 })
-
-// Команда /usepromo [название]
-bot.command('usepromo', async ctx => {
-	const args = ctx.message.text.split(' ').slice(1)
-	if (args.length < 1) {
-		return ctx.reply('Используйте: /usepromo [название]')
-	}
-
-	const promoName = args[0]
-
-	// Проверка наличия промокода
-	if (!promoCodestg[promoName]) {
-		// Исправлено на promoCodestg
-		return ctx.reply('Такой промокод не существует.')
-	}
-
-	// Проверка активаций
-	if (promoCodestg[promoName].activationsLeft === 0) {
-		// Исправлено на promoCodestg
-		return ctx.reply('Активации данного промокода закончились.')
-	}
-
-	// Проверка, был ли уже использован промокод этим пользователем
-	if (usedPromoCodes[ctx.from.id] && usedPromoCodes[ctx.from.id][promoName]) {
-		return ctx.reply('Вы уже использовали этот промокод.')
-	}
-
-	// Получение текущего значения score
-	const { data: user, error: fetchError } = await supabase
-		.from('users')
-		.select('score')
-		.eq('telegram', ctx.from.id)
-		.single()
-
-	if (fetchError || !user) {
-		return ctx.reply('Ошибка при получении данных пользователя.')
-	}
-
-	const newScore = user.score + promoCodestg[promoName].amount
-
-	// Обновление значения score
-	const { error: updateError } = await supabase
-		.from('users')
-		.update({ score: newScore })
-		.eq('telegram', ctx.from.id)
-
-	if (updateError) {
-		return ctx.reply('Ошибка при начислении баланса.')
-	}
-
-	// Обновление оставшихся активаций
-	promoCodestg[promoName].activationsLeft -= 1 // Исправлено на promoCodestg
-
-	// Сохранение использования промокода
-	if (!usedPromoCodes[ctx.from.id]) {
-		usedPromoCodes[ctx.from.id] = {}
-	}
-	usedPromoCodes[ctx.from.id][promoName] = true
-
-	return ctx.reply(
-		`Промокод ${promoName} использован. Вам начислено ${promoCodestg[promoName].amount} WCoin.` // Исправлено на promoCodestg
-	)
-})
-
-// Получение ID пользователя из сообщения
-const getUserId = async (ctx, target) => {
-    if (ctx.message.reply_to_message) {
-        return ctx.message.reply_to_message.from.id; // ID из ответа на сообщение
-    } else if (target.startsWith('@')) {
-        const username = target.slice(1);
-        const user = await ctx.telegram.getChatMember(ctx.chat.id, username);
-        return user.user.id; // ID по username
-    } else {
-        return target; // ID напрямую
-    }
-};
-
-// Получение ника пользователя
-const getUsername = async (ctx, userId) => {
-    try {
-        const user = await ctx.telegram.getChatMember(ctx.chat.id, userId);
-        return user.user.username ? `@${user.user.username}` : 'без ника';
-    } catch (error) {
-        return 'без ника';
-    }
-};
 
 bot.command('clans', async (ctx) => {
 	const isModerator = await checkModerator(ctx);
@@ -552,6 +1095,92 @@ bot.command('war', async (ctx) => {
   }
 });
 
+// Команда /usepromo [название]
+bot.command('usepromo', async ctx => {
+	const args = ctx.message.text.split(' ').slice(1)
+	if (args.length < 1) {
+		return ctx.reply('Используйте: /usepromo [название]')
+	}
+
+	const promoName = args[0]
+
+	// Проверка наличия промокода
+	if (!promoCodestg[promoName]) {
+		// Исправлено на promoCodestg
+		return ctx.reply('Такой промокод не существует.')
+	}
+
+	// Проверка активаций
+	if (promoCodestg[promoName].activationsLeft === 0) {
+		// Исправлено на promoCodestg
+		return ctx.reply('Активации данного промокода закончились.')
+	}
+
+	// Проверка, был ли уже использован промокод этим пользователем
+	if (usedPromoCodes[ctx.from.id] && usedPromoCodes[ctx.from.id][promoName]) {
+		return ctx.reply('Вы уже использовали этот промокод.')
+	}
+
+	// Получение текущего значения score
+	const { data: user, error: fetchError } = await supabase
+		.from('users')
+		.select('score')
+		.eq('telegram', ctx.from.id)
+		.single()
+
+	if (fetchError || !user) {
+		return ctx.reply('Ошибка при получении данных пользователя.')
+	}
+
+	const newScore = user.score + promoCodestg[promoName].amount
+
+	// Обновление значения score
+	const { error: updateError } = await supabase
+		.from('users')
+		.update({ score: newScore })
+		.eq('telegram', ctx.from.id)
+
+	if (updateError) {
+		return ctx.reply('Ошибка при начислении баланса.')
+	}
+
+	// Обновление оставшихся активаций
+	promoCodestg[promoName].activationsLeft -= 1 // Исправлено на promoCodestg
+
+	// Сохранение использования промокода
+	if (!usedPromoCodes[ctx.from.id]) {
+		usedPromoCodes[ctx.from.id] = {}
+	}
+	usedPromoCodes[ctx.from.id][promoName] = true
+
+	return ctx.reply(
+		`Промокод ${promoName} использован. Вам начислено ${promoCodestg[promoName].amount} WCoin.` // Исправлено на promoCodestg
+	)
+})
+
+// Получение ID пользователя из сообщения
+const getUserId = async (ctx, target) => {
+    if (ctx.message.reply_to_message) {
+        return ctx.message.reply_to_message.from.id; // ID из ответа на сообщение
+    } else if (target.startsWith('@')) {
+        const username = target.slice(1);
+        const user = await ctx.telegram.getChatMember(ctx.chat.id, username);
+        return user.user.id; // ID по username
+    } else {
+        return target; // ID напрямую
+    }
+};
+
+// Получение ника пользователя
+const getUsername = async (ctx, userId) => {
+    try {
+        const user = await ctx.telegram.getChatMember(ctx.chat.id, userId);
+        return user.user.username ? `@${user.user.username}` : 'без ника';
+    } catch (error) {
+        return 'без ника';
+    }
+};
+
 // Команда /ahelp (доступ только для админа)
 bot.command('ahelp', async ctx => {
 	if (!await checkModerator(ctx)) {
@@ -559,7 +1188,7 @@ bot.command('ahelp', async ctx => {
     }
 
 	await ctx.reply(
-		`Модераторские команды:\n/mute [id/ответ на сообщение] [мин] [причина]\n/unmute [id/ответ на сообщение]\n/mutelist\n/ban [id/ответ на сообщение] [дни] [причина]\n/unban [id/ответ на сообщение]\n/banlist\n/warn [id/ответ на сообщение] [причина]\n/unwarn [id/ответ на сообщение]\n/warnlist\n/check [id/ответ на сообщение]\n/logs\n\nПрочее:\n/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]\n/рассылка [текст]`
+		`Модераторские команды:\n/mute [id/ответ на сообщение] [мин] [причина]\n/unmute [id/ответ на сообщение]\n/mutelist\n/ban [id/ответ на сообщение] [дни] [причина]\n/unban [id/ответ на сообщение]\n/banlist\n/warn [id/ответ на сообщение] [причина]\n/unwarn [id/ответ на сообщение]\n/warnlist\n/check [id/ответ на сообщение]\n/logs\n\nПрочее:\n/creatpromo [название] [сумма]\n/ccreatpromo [название] [сумма] [кол-во активаций]\n/delpromo [название]\n/рассылка [текст]\n/clans\n\nНастройка и статика:\n/ids - список дубликатов ID\n/dids [id] - удалить дублирующие записи из базы по ID\n/stats - статистика за 24ч`
 	)
 })
 
@@ -6340,7 +6969,7 @@ vk.updates.on('message_new', async context => {
 		} else {
 			context.send('❌ Вы не состоите в клане.')
 		}
-	} else if (message.startsWith('/wclan ахитыавыпзахват')) {
+	} else if (message.startsWith('/wclan захват')) {
 		const villageName = message.split(' ').slice(2).join(' ')
 
 		const village = await getVillageByName(villageName)
